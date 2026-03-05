@@ -23,7 +23,6 @@ Current node	Marked with X
 Final path      Green
 '''
 
-import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')  # otherwise unable to run animation
 
@@ -197,10 +196,6 @@ def visualize_tree_search(found, sequence, path, parent, G, start, goal, cols):
         nx.draw_networkx_edges(tree, vis_pos, ax=ax, edge_color=edge_colors, arrows=True, arrowsize=12, width=1.5)
         nx.draw_networkx_labels(tree, vis_pos, ax=ax, labels={n: label(n) for n in tree.nodes()}, font_size=7, font_weight='bold')
 
-        if curr is not None and curr in vis_pos:
-            x, y = vis_pos[curr]
-            ax.scatter(x, y, marker='x', color='black', s=200, zorder=5, linewidths=2)
-
         if frame >= len(sequence):
             ax.set_title("Path Found ✓" if found else "No Path Found ✗",
                          fontsize=16, fontweight='bold', color='green' if found else 'red')
@@ -251,6 +246,9 @@ def visualize_side_by_side(found, events_or_sequence, sequence, path, parent, G,
     node_state = {}  # node_id -> 'discovered' | 'visited'
 
     fig, (ax_grid, ax_tree) = plt.subplots(1, 2, figsize=(18, 8))
+    manager = plt.get_current_fig_manager()
+    manager.full_screen_toggle()
+
     fig.suptitle("Search Visualization", fontsize=18, fontweight='bold')
 
     im = ax_grid.imshow(color_grid, cmap=cmap, vmin=0, vmax=vmax, interpolation='nearest')
@@ -347,10 +345,6 @@ def visualize_side_by_side(found, events_or_sequence, sequence, path, parent, G,
         nx.draw_networkx_edges(tree, vis_pos, ax=ax_tree, edge_color=edge_colors, arrows=True, arrowsize=12, width=1.5)
         nx.draw_networkx_labels(tree, vis_pos, ax=ax_tree, labels={n: label(n) for n in tree.nodes()}, font_size=7, font_weight='bold')
 
-        if curr is not None and curr in vis_pos:
-            x, y = vis_pos[curr]
-            ax_tree.scatter(x, y, marker='x', color='black', s=200, zorder=5, linewidths=2)
-
         if frame >= len(events):
             ax_tree.set_title("Tree View — Path Found ✓" if found else "Tree View — No Path Found ✗",
                               fontsize=13, fontweight='bold', color='green' if found else 'red')
@@ -363,15 +357,3 @@ def visualize_side_by_side(found, events_or_sequence, sequence, path, parent, G,
     _anim = FuncAnimation(fig, update, frames=total_frames, interval=150, blit=False, repeat=False)
     plt.tight_layout()
     plt.show()
-
-from environment_generation import create_grid, generate_obstacles, get_start_and_goal, grid_to_graph
-from agent import bfs, dfs
-
-grid = create_grid()
-grid = generate_obstacles(grid)
-start, goal = get_start_and_goal(grid)
-G = grid_to_graph(grid)
-cols = len(grid[0])
-
-found, events, sequence, path, parent = bfs(G, start, goal, cols)
-visualize_side_by_side(found, events, sequence, path, parent, G, start, goal, cols, True)
