@@ -1,16 +1,17 @@
-# 1. Environment Generation
-#
-# Source: Repurpose graph creation and visualization code from 2025_Measles_in_SW_Kansas
-# * Provides graph representation and grid implementation as a starting point
-# * Rework graph logic: remove weights, add grid size parameter (n×n, default 10×10)
-#
-# Obstacles
-# * Randomly generate obstacles and flag nodes with an attribute (e.g. obstacle=True) — do not remove nodes from the graph, as obstructed/unobstructed state is needed to populate the grid
-# * Update graph edges accordingly after obstacle placement
-#
-# Start & Goal Nodes
-# * Randomly select from valid (non-obstacle) nodes
-#
+'''
+1. Environment Generation
+
+Source: Repurpose graph creation and visualization code from 2025_Measles_in_SW_Kansas
+* Provides graph representation and grid implementation as a starting point
+* Rework graph logic: remove weights, add grid size parameter (n×n, default 10×10)
+
+Obstacles
+* Randomly generate obstacles and flag nodes with an attribute (e.g. obstacle=True) — do not remove nodes from the graph, as obstructed/unobstructed state is needed to populate the grid
+* Update graph edges accordingly after obstacle placement
+
+Start & Goal Nodes
+* Randomly select from valid (non-obstacle) nodes
+'''
 
 import random
 import matplotlib.pyplot as plt
@@ -21,9 +22,6 @@ def create_grid(size = 10):
     grid = [[True] * size for _ in range(size)]
     return grid
 
-# Debug
-# print(create_grid())
-
 def generate_obstacles(grid: list):
     size = len(grid)
     total_cells = size * size
@@ -31,8 +29,6 @@ def generate_obstacles(grid: list):
     # Pick a random percentage between 20% and 30%
     obstacle_percentage = random.uniform(0.20, 0.30)
     num_obstacles = int(total_cells * obstacle_percentage)
-    # debug
-    # print("num_obstacles:", num_obstacles)
 
     # Generate unique random (row, col) positions
     all_positions = [(r, c) for r in range(size) for c in range(size)]
@@ -49,8 +45,6 @@ def get_start_and_goal(grid: list):
 
     # Collect all valid (True) (row, col) indices
     valid_cells = [(r, c) for r in range(size) for c in range(size) if grid[r][c]]
-    # debug
-    # print(valid_cells)
 
     if len(valid_cells) < 1:
         raise ValueError("Grid does not have enough open cells to place start and goal.")
@@ -58,23 +52,7 @@ def get_start_and_goal(grid: list):
     start = random.choice(valid_cells)
     goal = random.choice(valid_cells)
 
-    # debug
-    # print(f"Start: {start}, Goal: {goal}")
     return start, goal
-
-grid = generate_obstacles(create_grid(10))
-get_start_and_goal(grid)
-
-
-'''
-# check grid creation and obstacle creation works correctly
-grid = create_grid()
-grid = generate_obstacles(grid)
-
-# Visualize the grid
-for row in grid:
-    print(["✓" if cell else "X" for cell in row])
-'''
 
 def get_node_labels(num_vertices):
     labels = {}
@@ -160,7 +138,8 @@ def visualize_grid_graph(G, rows, cols, start, goal):
     plt.tight_layout()
     plt.show()
 
-
+'''
+# Run code (debug)
 grid = generate_obstacles(create_grid(10))
 s, g = get_start_and_goal(grid)
 
@@ -169,3 +148,4 @@ visualize_grid_graph(G, rows=10, cols=10, start=s, goal=g)
 
 # Debug: Inspect a specific cell
 # print(G.nodes[7])  # → {'row': 1, 'col': 2, 'passable': True/False}
+'''
