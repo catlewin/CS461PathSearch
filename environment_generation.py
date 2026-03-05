@@ -137,15 +137,3 @@ def visualize_grid_graph(G, rows, cols, start, goal):
     plt.axis('off')
     plt.tight_layout()
     plt.show()
-
-'''
-# Run code (debug)
-grid = generate_obstacles(create_grid(10))
-s, g = get_start_and_goal(grid)
-
-G = grid_to_graph(grid)
-visualize_grid_graph(G, rows=10, cols=10, start=s, goal=g)
-
-# Debug: Inspect a specific cell
-# print(G.nodes[7])  # → {'row': 1, 'col': 2, 'passable': True/False}
-'''

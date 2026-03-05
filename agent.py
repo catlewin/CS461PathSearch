@@ -38,25 +38,29 @@ def bfs(G, start, goal, cols):
 
     parent   = {start_id: None}
     queue    = deque([start_id])
-    sequence = [start_id]
+    events   = [('discover', start_id), ('visit', start_id)]  # start is immediately discovered + visited
+    sequence = [start_id]  # visit-only list for path reconstruction
 
     if start_id == goal_id:
-        return True, sequence, [start_id], parent
+        return True, events, sequence, [start_id], parent
 
     while queue:
         curr = queue.popleft()
+        events.append(('visit', curr))
 
         for neighbor in G.neighbors(curr):
             if neighbor not in parent:
                 parent[neighbor] = curr
+                events.append(('discover', neighbor))
                 sequence.append(neighbor)
 
                 if neighbor == goal_id:
-                    return True, sequence, _reconstruct_path(parent, start_id, goal_id), parent
+                    events.append(('visit', neighbor))
+                    return True, events, sequence, _reconstruct_path(parent, start_id, goal_id), parent
 
                 queue.append(neighbor)
 
-    return False, sequence, [], parent
+    return False, events, sequence, [], parent
 
 
 def dfs(G, start, goal, cols):
@@ -84,22 +88,3 @@ def dfs(G, start, goal, cols):
                 stack.append(neighbor)
 
     return False, sequence, [], parent
-
-'''
-# Run Code (debug)
-
-from environment_generation import create_grid, generate_obstacles, get_start_and_goal, grid_to_graph
-
-grid = generate_obstacles(create_grid())
-start, goal = get_start_and_goal(grid)
-
-G = grid_to_graph(grid)
-cols = len(grid[0])
-
-bfs_found, bfs_sequence, bfs_path, bfs_parent = bfs(G, start, goal, cols)
-bfs_found, bfs_sequence, dfs_path, dfs_parent = dfs(G, start, goal, cols)
-
-print(f"Start: {start}, Goal: {goal}")
-print(f"BFS path: {bfs_path}")
-print(f"DFS path: {dfs_path}")
-'''
