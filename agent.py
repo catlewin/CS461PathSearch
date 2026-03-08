@@ -1,29 +1,37 @@
-'''
-2. Agent & Search
+"""
+agent.py
+--------
+Implements BFS & DFS uninformed search agents for grid-based pathfinding
+using a NetworkX graph representation of a 2D grid. Both algorithms track
+visitation history and reconstruct the path from start to goal upon completion.
 
-Movement
-* Allowed directions: N, S, E, W (up, down, left, right)
-* Cannot move into blocked nodes
+Functions
+---------
+_reconstruct_path(parent, start, goal)
+    Helper function to reconstruct the path from start to goal.
 
-Perception
-* Agent perceives only its current node and its four cardinal neighbors
-* Note: The search algorithm tracks all previously visited nodes (global state), though the agent can only move to direct neighbors
+bfs(G, start, goal, cols)
+    Breadth-first search returning events, visitation sequence,
+    path, and parent map.
 
-Parameters: start node, goal node, graph (search space)
-
-Termination
-* Success: Goal node reached
-* Failure: All reachable nodes exhausted without finding goal — report failure
-
-Internals
-* Build search tree during traversal (each visited node added as child of its predecessor)
-* Store full node visit history for animation playback
-* Track paths via a came_from dictionary mapping each node to its parent
-'''
+dfs(G, start, goal, cols)
+    Depth-first search returning visitation sequence, path,
+    and parent map.
+"""
 
 from collections import deque
 
 def _reconstruct_path(parent, start, goal):
+    '''
+    Reconstruct the path from start to goal.
+
+    :param parent: Dictionary mapping each discovered node ID to its parent node ID. Used for path reconstruction and tree visualization.
+    :param start: tuple coordinates of the start cell.
+    :param goal: tuple coordinates of the goal cell.
+
+    :return:- path (list[int]): Node IDs forming a path from start to goal inclusive. Empty list if no path was found.
+    '''
+
     path, node = [], goal
     while node is not None:
         path.append(node)
@@ -31,14 +39,37 @@ def _reconstruct_path(parent, start, goal):
     path.reverse()
     return path if path[0] == start else []
 
-
 def bfs(G, start, goal, cols):
-    start_id = start[0] * cols + start[1]
-    goal_id  = goal[0]  * cols + goal[1]
+    """
+    Breadth-first search of a grid graph from start to goal.
 
-    parent   = {start_id: None}
-    queue    = deque([start_id])
-    events   = [('discover', start_id), ('visit', start_id)]  # start is immediately discovered + visited
+    Parameters
+    ----------
+    G : networkx.Graph
+        Grid graph where nodes are flat integer IDs (r * cols + c) and
+        edges connect valid cardinal neighbors.
+    start : tuple
+        (row, col) coordinates of the start cell.
+    goal : tuple
+        (row, col) coordinates of the goal cell.
+    cols : int
+        Number of columns in the grid, used to convert (row, col) to node ID.
+
+    Returns
+    -------
+    tuple: A 4-tuple containing:
+        - found (bool): True if a path from start to goal was found, else False.
+        - events (list[tuple]): Sequence of ('discover', node_id) and ('visit', node_id) events for agent. Node added as discovered when enqueued, then as visited when dequeued & processed.
+        - sequence (list[int]): Node IDs in visitation order, appended as each node is popped from the stack and processed. Used for path reconstruction and visualization.
+        - path (list[int]): Node IDs forming a path from start to goal inclusive. Empty list if no path was found.
+        - parent (dict): Maps each discovered node ID to its parent node ID. Used for path reconstruction and tree visualization.
+    """
+    start_id = start[0] * cols + start[1]
+    goal_id = goal[0] * cols + goal[1]
+
+    parent = {start_id: None}
+    queue = deque([start_id])
+    events = [('discover', start_id), ('visit', start_id)]  # start is immediately discovered + visited
     sequence = [start_id]  # visit-only list for path reconstruction
 
     if start_id == goal_id:
@@ -64,11 +95,34 @@ def bfs(G, start, goal, cols):
 
 
 def dfs(G, start, goal, cols):
-    start_id = start[0] * cols + start[1]
-    goal_id  = goal[0]  * cols + goal[1]
+    """
+    Depth-first search on a grid graph from start to goal.
 
-    parent   = {start_id: None}
-    stack    = [start_id]
+    Parameters
+    ----------
+    G : networkx.Graph
+        Grid graph where nodes are flat integer IDs (r * cols + c) and
+        edges connect valid cardinal neighbors.
+    start : tuple
+        (row, col) coordinates of the start cell.
+    goal : tuple
+        (row, col) coordinates of the goal cell.
+    cols : int
+        Number of columns in the grid, used to convert (row, col) to node ID.
+
+    Returns
+    -------
+    tuple: A 4-tuple containing:
+        - found (bool): True if a path from start to goal was found, else False.
+        - sequence (list[int]): Node IDs in visitation order, appended as each node is popped from the stack and processed. Used for path reconstruction and visualization.
+        - path (list[int]): Node IDs forming a path from start to goal inclusive. Empty list if no path was found.
+        - parent (dict): Maps each discovered node ID to its parent node ID. Used for path reconstruction and tree visualization.
+    """
+    start_id = start[0] * cols + start[1]
+    goal_id = goal[0] * cols + goal[1]
+
+    parent = {start_id: None}
+    stack = [start_id]
     sequence = []
 
     while stack:

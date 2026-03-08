@@ -1,17 +1,30 @@
-'''
-1. Environment Generation
+"""
+environment_generation.py
+-------------------------
+Generates and visualizes grid-based environments for pathfinding agents.
 
-Source: Repurpose graph creation and visualization code from 2025_Measles_in_SW_Kansas
-* Provides graph representation and grid implementation as a starting point
-* Rework graph logic: remove weights, add grid size parameter (n×n, default 10×10)
+Functions
+---------
+create_grid(size)
+    Creates a square 2D boolean grid of the given size, all cells open.
 
-Obstacles
-* Randomly generate obstacles and flag nodes with an attribute (e.g. obstacle=True) — do not remove nodes from the graph, as obstructed/unobstructed state is needed to populate the grid
-* Update graph edges accordingly after obstacle placement
+generate_obstacles(grid)
+    Randomly marks 20-30% of grid cells as obstacles (False).
 
-Start & Goal Nodes
-* Randomly select from valid (non-obstacle) nodes
-'''
+get_start_and_goal(grid)
+    Randomly selects two valid (open) cells as start and goal positions.
+
+get_node_labels(num_vertices)
+    Generates alphabetical labels (A, B, ..., Z, AA, AB, ...) for nodes.
+
+grid_to_graph(grid)
+    Converts the 2D grid into a NetworkX graph with node attributes
+    and edges between passable 4-directional neighbors.
+
+visualize_grid_graph(G, rows, cols, start, goal)
+    Visualizes the grid graph using matplotlib and networkx with color-coded
+    nodes for obstacles, open cells, start, and goal.
+"""
 
 import random
 import matplotlib.pyplot as plt
@@ -19,10 +32,23 @@ import networkx as nx
 import string
 
 def create_grid(size = 10):
+    """
+    Creates a matrix of size by size with entries True.
+
+    :param size: Matrix size. Defaults to 10.
+    :return: Matrix of booleans of size by size.
+    :rtype: list
+    """
     grid = [[True] * size for _ in range(size)]
     return grid
 
 def generate_obstacles(grid: list):
+    """
+    Randomly generates obstacles for 20-30% of cells. Updates matrix with obstacles represented as False boolean.
+
+    :param grid:
+    :return: Matrix with obstacles represented as False boolean.
+    """
     size = len(grid)
     total_cells = size * size
 
@@ -41,6 +67,12 @@ def generate_obstacles(grid: list):
     return grid
 
 def get_start_and_goal(grid: list):
+    """
+    Randomly generates a start and goal cell within the available valid cells.
+
+    :param grid:
+    :return: tuple coordinates for start & goal cells.
+    """
     size = len(grid)
 
     # Collect all valid (True) (row, col) indices
@@ -55,6 +87,13 @@ def get_start_and_goal(grid: list):
     return start, goal
 
 def get_node_labels(num_vertices):
+    """
+    Creates letter labels for graph visualization.
+
+    :param num_vertices:
+    :return: Node labels.
+    :rtype: list of letter labels.
+    """
     labels = {}
     alphabet = string.ascii_uppercase  # 'A' to 'Z'
     base = len(alphabet)
@@ -72,6 +111,13 @@ def get_node_labels(num_vertices):
     return labels
 
 def grid_to_graph(grid: list):
+    """
+    Transforms square matrix to a networkx graph.
+
+    :param grid: Matrix of booleans.
+    :return: NetworkX Graph representation of the grid.
+    :rtype: NetworkX Graph.
+    """
     rows = len(grid)
     cols = len(grid[0])
 
@@ -100,6 +146,17 @@ def grid_to_graph(grid: list):
     return G
 
 def visualize_grid_graph(G, rows, cols, start, goal):
+    """
+    Visualizes the Graph.
+
+    :param G:
+    :param rows:
+    :param cols:
+    :param start:
+    :param goal:
+    :return: None
+    """
+
     plt.figure(figsize=(8, 8))
 
     # Use grid coordinates for layout (mirrors the actual grid visually)
