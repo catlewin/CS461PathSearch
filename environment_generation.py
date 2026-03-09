@@ -121,7 +121,7 @@ def grid_to_graph(grid: list):
     rows = len(grid)
     cols = len(grid[0])
 
-    G = nx.Graph()
+    G = nx.DiGraph()
 
     # Add every cell as a node, storing its (row, col) position and True/False value
     for r in range(rows):
@@ -131,7 +131,7 @@ def grid_to_graph(grid: list):
 
     # Connect each node to its 4-directional neighbors (up/down/left/right)
     # Only open cells (True) can form edges — blocked cells (False) are isolated
-    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    directions = [(0, -1), (1, 0), (-1, 0), (0, 1)]  # left, down, up, right
     for r in range(rows):
         for c in range(cols):
             if not grid[r][c]:  # skip obstacle nodes as edge sources
@@ -194,3 +194,8 @@ def visualize_grid_graph(G, rows, cols, start, goal):
     plt.axis('off')
     plt.tight_layout()
     plt.show()
+
+grid = generate_obstacles(create_grid())
+start, goal = get_start_and_goal(grid)
+G = grid_to_graph(grid)
+# visualize_grid_graph(G, 10, 10, start, goal)

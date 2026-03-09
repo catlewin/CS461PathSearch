@@ -399,8 +399,7 @@ def visualize_side_by_side(found, events_or_sequence, sequence, path, parent, G,
     # Tree layout — built from visit-only sequence for stable pos
     full_tree = nx.DiGraph()
     full_tree.add_node(start_id)
-    for node_id in sequence[1:]:
-        par = parent.get(node_id)
+    for node_id, par in parent.items():
         if par is not None:
             full_tree.add_edge(par, node_id)
     pos = _hierarchy_pos(full_tree, start_id)
@@ -528,6 +527,6 @@ def visualize_side_by_side(found, events_or_sequence, sequence, path, parent, G,
         legend = _tree_legend() if is_bfs else _tree_legend()[2:]  # drop discovered entry for DFS
         ax_tree.legend(handles=legend, loc='upper right', fontsize=8)
 
-    _anim = FuncAnimation(fig, update, frames=total_frames, interval=150, blit=False, repeat=False)
+    _anim = FuncAnimation(fig, update, frames=total_frames, interval=250, blit=False, repeat=False)
     plt.tight_layout()
     plt.show()

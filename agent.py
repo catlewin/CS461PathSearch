@@ -57,7 +57,7 @@ def bfs(G, start, goal, cols):
 
     Returns
     -------
-    tuple: A 4-tuple containing:
+    tuple: A 5-tuple containing:
         - found (bool): True if a path from start to goal was found, else False.
         - events (list[tuple]): Sequence of ('discover', node_id) and ('visit', node_id) events for agent. Node added as discovered when enqueued, then as visited when dequeued & processed.
         - sequence (list[int]): Node IDs in visitation order, appended as each node is popped from the stack and processed. Used for path reconstruction and visualization.
@@ -69,30 +69,34 @@ def bfs(G, start, goal, cols):
 
     parent = {start_id: None}
     queue = deque([start_id])
-    events = [('discover', start_id), ('visit', start_id)]  # start is immediately discovered + visited
-    sequence = [start_id]  # visit-only list for path reconstruction
+    events = [('discover', start_id)]
+    sequence = []  # visit-only list for path reconstruction
 
     if start_id == goal_id:
         return True, events, sequence, [start_id], parent
-
+    print("goal: ", goal)
     while queue:
         curr = queue.popleft()
         events.append(('visit', curr))
+        sequence.append(curr)
+        print('curr: ', curr)
 
+        if curr == goal_id:
+            print('goal found')
+            print("events: ", events)
+            print("sequence: ", sequence)
+            return True, events, sequence, _reconstruct_path(parent, start_id, goal_id), parent
+
+        print('adding neighbors: ')
         for neighbor in G.neighbors(curr):
             if neighbor not in parent:
                 parent[neighbor] = curr
                 events.append(('discover', neighbor))
-                sequence.append(neighbor)
-
-                if neighbor == goal_id:
-                    events.append(('visit', neighbor))
-                    return True, events, sequence, _reconstruct_path(parent, start_id, goal_id), parent
-
                 queue.append(neighbor)
+                print('new neighbor: ', neighbor)
+
 
     return False, events, sequence, [], parent
-
 
 def dfs(G, start, goal, cols):
     """
@@ -125,6 +129,8 @@ def dfs(G, start, goal, cols):
     stack = [start_id]
     sequence = []
 
+    visited = {start_id}
+
     while stack:
         curr = stack.pop()
 
@@ -136,8 +142,11 @@ def dfs(G, start, goal, cols):
         if curr == goal_id:
             return True, sequence, _reconstruct_path(parent, start_id, goal_id), parent
 
+        # DiGraph guarantees neighbor order matches directions in grid_to_graph
+        # Push order: left, down, up, right → visit order: right, up, down, left
         for neighbor in G.neighbors(curr):
-            if neighbor not in parent:
+            if neighbor not in visited:
+                visited.add(neighbor)
                 parent[neighbor] = curr
                 stack.append(neighbor)
 

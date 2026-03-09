@@ -4,7 +4,7 @@ from search_visualization import visualize_side_by_side
 
 
 # Create grid with obstacles, start & end
-grid_dim = 8
+grid_dim = 20
 grid = generate_obstacles(create_grid(grid_dim))
 start, goal = get_start_and_goal(grid)
 
@@ -15,7 +15,7 @@ grid_graph = grid_to_graph(grid)
 found, events, sequence, path, parent = bfs(grid_graph, start, goal, grid_dim)
 
 # Call visualization animation for BFS
-visualize_side_by_side(found, events, sequence, path, parent, grid_graph, start, goal, grid_dim, True)
+# visualize_side_by_side(found, events, sequence, path, parent, grid_graph, start, goal, grid_dim, True)
 
 # DFS agent
 found, sequence, path, parent = dfs(grid_graph, start, goal, grid_dim)
