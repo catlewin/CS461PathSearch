@@ -11,13 +11,14 @@ start, goal = get_start_and_goal(grid)
 # Matrix --> NetworkX Graph
 grid_graph = grid_to_graph(grid)
 
-# Call BFS, return
-#   boolean if path to goal found
-#   list of tuples, order of discovery, then visiting
-#   list of nodes, visiting order
-#   list of nodes, path from start to goal, empty if no path
-#   dictionary, children nodes: parent node
+# BFS agent
 found, events, sequence, path, parent = bfs(grid_graph, start, goal, grid_dim)
 
-# Call visualization animation
+# Call visualization animation for BFS
 visualize_side_by_side(found, events, sequence, path, parent, grid_graph, start, goal, grid_dim, True)
+
+# DFS agent
+found, sequence, path, parent = dfs(grid_graph, start, goal, grid_dim)
+
+# Call visualization animation for DFS
+visualize_side_by_side(found, sequence, sequence, path, parent, grid_graph, start, goal, grid_dim)
