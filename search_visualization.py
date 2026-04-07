@@ -1,67 +1,69 @@
 """
 search_visualization.py
 -----------------------
-Animates BFS and DFS grid search using matplotlib.
+Defines the Visualizer class for animating grid-based search agents.
 
-Functions
----------
-_hierarchy_pos(tree, root):
-    Helper function to compute a top-down hierarchical layout for a tree graph.
+All rendering is driven from a single Agent instance — grid, events,
+parent map, and path are all accessed via agent and agent.grid.
+BFS-specific coloring (discovered / frontier nodes in yellow) is gated
+on self._is_bfs, derived once at construction via isinstance check.
 
-_build_tree(sequence_or_events, parent, start_id, frame, is_bfs=False)
-    Helper function to build a directed tree graph up to a given animation frame.
+Classes
+-------
+Visualizer
+    Accepts any Agent subclass and exposes three public animation methods.
 
-_grid_legend(include_discovered=False):
-    Helper function to build the legend element list for the grid visualization.
+Module-level helpers (private)
+------------------------------
+_hierarchy_pos(tree, root)
+    Top-down hierarchical layout for a DiGraph tree.
 
-_tree_legend():
-    Helper function to build the legend element list for the tree visualization.
+_build_tree(agent, frame)
+    Incrementally builds the search tree DiGraph up to a given frame.
 
-visualize_grid_path(found, sequence, path, G, start, goal, cols)
-    Animates the agent moving through the grid cell by cell.
+_grid_legend(include_discovered)
+    Builds matplotlib legend handles for the grid view.
 
-visualize_tree_search(found, sequence, path, parent, G, start, goal, cols)
-    Animates the search as a growing directed tree with a top-down hierarchical layout.
-
-visualize_side_by_side(found, events_or_sequence, sequence, path, parent, G, start, goal, cols, is_bfs=False)
-    Animates grid and tree views in sync side by side in a single window.
+_tree_legend(include_discovered)
+    Builds matplotlib legend handles for the tree view.
 """
 
 import matplotlib
-
-matplotlib.use('TkAgg')  # otherwise unable to run animation
+matplotlib.use('TkAgg')
 
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.colors import ListedColormap
 from matplotlib.animation import FuncAnimation
+from matplotlib.colors import ListedColormap
 import networkx as nx
+
+from agent import Agent, BFSAgent
 
 _anim = None
 
-# Color indices
-# 0=obstacle, 1=unvisited, 2=visited, 3=agent, 4=path, 5=discovered
-CMAP = ListedColormap(['black', 'white', 'lightblue', 'tomato', 'mediumseagreen', 'lightyellow'])
-CMAP_DFS = ListedColormap(['black', 'white', 'lightblue', 'tomato', 'mediumseagreen'])  # no discovered state
+# Color index map:  0=obstacle  1=unvisited  2=visited  3=agent  4=path  5=discovered
+CMAP     = ListedColormap(['black', 'white', 'lightblue', 'tomato', 'mediumseagreen', 'lightyellow'])
+CMAP_DFS = ListedColormap(['black', 'white', 'lightblue', 'tomato', 'mediumseagreen'])
 
+
+# ---------------------------------------------------------------------------
+# Module-level private helpers
+# ---------------------------------------------------------------------------
 
 def _hierarchy_pos(tree, root):
     """
-    Compute a top-down hierarchical layout for a tree graph.
+    Compute a top-down hierarchical layout for a directed tree.
 
-    Assigns each node an (x, y) position based on its depth from the root,
-    with nodes centered horizontally within each depth level and the root
-    placed at the top (y=0), increasing depth downward.
+    Parameters
+    ----------
+    tree : nx.DiGraph
+    root : int
 
-    :param tree: Directed tree graph to compute positions for.
-    :type tree: networkx.DiGraph
-    :param root: Node ID of the root, placed at the top of the layout.
-    :type root: int
-    :return: Dictionary mapping each node ID to its (x, y) position.
-    :rtype: dict
+    Returns
+    -------
+    dict  —  node_id → (x, y)
     """
-
     depths = {root: 0}
     for u, v in nx.bfs_edges(tree, root):
         depths[v] = depths[u] + 1
@@ -75,458 +77,427 @@ def _hierarchy_pos(tree, root):
     return pos
 
 
-def _build_tree(sequence_or_events, parent, start_id, frame, is_bfs=False):
+def _build_tree(agent, frame):
     """
-    Incrementally build a directed tree graph up to a given animation frame.
+    Build a directed tree DiGraph containing all nodes visible at *frame*.
 
-    Constructs a DiGraph by adding parent-child edges for each node visible
-    at the current frame. For BFS, nodes are read from tagged event
-    tuples. For DFS, nodes are read directly from the sequence list.
+    For BFS the event list contains both 'discover' and 'visit' tuples, so
+    all discovered nodes are included. For DFS only visited nodes exist.
 
-    :param sequence_or_events: For BFS, a list of ('discover' | 'visit', node_id)
-        event tuples. For DFS, a flat list of visited node IDs.
-    :type sequence_or_events: list
-    :param parent: Maps each discovered node ID to its parent node ID.
-    :type parent: dict
-    :param start_id: Flat node ID of the root/start node.
-    :type start_id: int
-    :param frame: Current animation frame index.
-    :type frame: int
-    :param is_bfs: If True, treats sequence_or_events as a BFS event list
-        and extracts node IDs from tuples. If False, treats it as a flat
-        DFS sequence. Defaults to False.
-    :type is_bfs: bool
-    :return: Directed tree graph containing all nodes and edges visible
-        at the given frame.
-    :rtype: networkx.DiGraph
+    Parameters
+    ----------
+    agent : Agent
+    frame : int
+
+    Returns
+    -------
+    nx.DiGraph
     """
     tree = nx.DiGraph()
-    tree.add_node(start_id)
-    if is_bfs:
-        visible = sequence_or_events[:min(frame + 1, len(sequence_or_events))]
-        for event_type, node_id in visible:
-            par = parent.get(node_id)
+    tree.add_node(agent.grid.start)
+    visible = agent.events[:min(frame + 1, len(agent.events))]
+
+    if isinstance(agent, BFSAgent):
+        for _event, node_id in visible:
+            par = agent.parent.get(node_id)
             if par is not None:
                 tree.add_edge(par, node_id)
     else:
-        visible = sequence_or_events[:min(frame + 1, len(sequence_or_events))]
-        for node_id in visible[1:]:
-            par = parent.get(node_id)
+        for node_id in [n for _, n in visible]:  # DFS events are also (type, node) now
+            par = agent.parent.get(node_id)
             if par is not None:
                 tree.add_edge(par, node_id)
+
     return tree
 
 
 def _grid_legend(include_discovered=False):
     """
-    Build the legend element list for the grid visualization.
+    Build legend handles for the grid view.
 
-    Optionally includes a discovered state entry for BFS visualizations where
-    candidate nodes are shown before being visited.
+    Parameters
+    ----------
+    include_discovered : bool
+        If True, inserts a yellow 'Discovered' patch (BFS only).
 
-    :param include_discovered: If True, inserts a light yellow 'Discovered'
-        patch into the legend for BFS candidate nodes. Defaults to False.
-    :type include_discovered: bool
-    :return: List of matplotlib legend handles for all grid cell states,
-        including obstacle, unvisited, visited, agent, path, and optionally
-        discovered, plus start and goal markers.
-    :rtype: list
+    Returns
+    -------
+    list  —  matplotlib legend handles
     """
     elements = [
-        mpatches.Patch(facecolor='black', label='Obstacle'),
-        mpatches.Patch(facecolor='white', edgecolor='gray', label='Unvisited'),
-        mpatches.Patch(facecolor='lightblue', label='Visited'),
-        mpatches.Patch(facecolor='tomato', label='Agent'),
+        mpatches.Patch(facecolor='black',       label='Obstacle'),
+        mpatches.Patch(facecolor='white',        edgecolor='gray', label='Unvisited'),
+        mpatches.Patch(facecolor='lightblue',    label='Visited'),
+        mpatches.Patch(facecolor='tomato',       label='Agent'),
         mpatches.Patch(facecolor='mediumseagreen', label='Path'),
     ]
     if include_discovered:
         elements.insert(3, mpatches.Patch(facecolor='lightyellow', edgecolor='gray', label='Discovered'))
     elements += [
-        plt.scatter([], [], marker='^', color='gold', s=80, edgecolors='black', label='Start'),
+        plt.scatter([], [], marker='^', color='gold',       s=80, edgecolors='black', label='Start'),
         plt.scatter([], [], marker='X', color='dodgerblue', s=80, edgecolors='black', label='Goal'),
     ]
     return elements
 
 
-def _tree_legend():
+def _tree_legend(include_discovered=False):
     """
-    Build the legend element list for the tree visualization.
+    Build legend handles for the tree view.
 
-    :return: List of matplotlib legend handles for all tree node states,
-        including start, goal, discovered, visited, current, and path.
-    :rtype: list
+    Parameters
+    ----------
+    include_discovered : bool
+        If True, inserts a yellow 'Discovered' patch (BFS only).
+
+    Returns
+    -------
+    list  —  matplotlib legend handles
     """
-    return [
-        mpatches.Patch(facecolor='gold', edgecolor='black', label='Start'),
-        mpatches.Patch(facecolor='dodgerblue', edgecolor='black', label='Goal'),
-        mpatches.Patch(facecolor='lightyellow', edgecolor='gray', label='Discovered'),
-        mpatches.Patch(facecolor='lightblue', edgecolor='black', label='Visited'),
-        mpatches.Patch(facecolor='tomato', edgecolor='black', label='Current'),
+    elements = [
+        mpatches.Patch(facecolor='gold',          edgecolor='black', label='Start'),
+        mpatches.Patch(facecolor='dodgerblue',    edgecolor='black', label='Goal'),
+        mpatches.Patch(facecolor='lightblue',     edgecolor='black', label='Visited'),
+        mpatches.Patch(facecolor='tomato',        edgecolor='black', label='Current'),
         mpatches.Patch(facecolor='mediumseagreen', edgecolor='black', label='Path'),
     ]
+    if include_discovered:
+        elements.insert(2, mpatches.Patch(facecolor='lightyellow', edgecolor='gray', label='Discovered'))
+    return elements
 
 
-def visualize_grid_path(found, sequence, path, G, start, goal, cols):
+# ---------------------------------------------------------------------------
+# Visualizer class
+# ---------------------------------------------------------------------------
+
+class Visualizer:
     """
-    Animate the agent's path through the grid cell by cell.
+    Animates a completed search agent's traversal and result.
 
-    Replays the search visitation sequence frame by frame using
-    FuncAnimation, coloring each cell as the agent visits it. On
-    completion, overlays the final path in green if one was found.
+    Accepts any Agent subclass (BFSAgent, DFSAgent, …). BFS-specific
+    coloring for frontier/discovered nodes is enabled automatically.
 
-    :param found: True if a path from start to goal was found.
-    :type found: bool
-    :param sequence: Node IDs in visitation order, one per animation frame.
-    :type sequence: list[int]
-    :param path: Node IDs forming the path from start to goal inclusive.
-        Empty list if no path was found.
-    :type path: list[int]
-    :param G: Grid graph where nodes carry 'row', 'col', and 'passable'
-        attributes.
-    :type G: networkx.Graph
-    :param start: (row, col) coordinates of the start cell.
-    :type start: tuple
-    :param goal: (row, col) coordinates of the goal cell.
-    :type goal: tuple
-    :param cols: Number of columns in the grid, used to convert node IDs
-        back to (row, col) coordinates.
-    :type cols: int
-    :return: None
+    Parameters
+    ----------
+    agent : Agent
+        A search agent on which .search() has already been called.
+
+    Attributes
+    ----------
+    agent : Agent
+    grid  : Grid        convenience alias for agent.grid
+    _is_bfs : bool      True when agent is a BFSAgent instance
     """
-    global _anim
-    rows = max(d['row'] for _, d in G.nodes(data=True)) + 1
 
-    base_grid = np.zeros((rows, cols), dtype=int)
-    for node, data in G.nodes(data=True):
-        if data['passable']:
-            base_grid[data['row']][data['col']] = 1
-    color_grid = base_grid.copy()
-    hold_frames = 15
-    total_frames = len(sequence) + hold_frames
+    def __init__(self, agent: Agent):
+        self.agent   = agent
+        self.grid    = agent.grid
+        self._is_bfs = isinstance(agent, BFSAgent)
 
-    fig, ax = plt.subplots(figsize=(8, 8))
-    im = ax.imshow(color_grid, cmap=CMAP_DFS, vmin=0, vmax=4, interpolation='nearest')
-    ax.set_xticks(np.arange(-0.5, cols, 1), minor=True)
-    ax.set_yticks(np.arange(-0.5, rows, 1), minor=True)
-    ax.grid(which='minor', color='gray', linewidth=0.5)
-    ax.tick_params(which='both', bottom=False, left=False, labelbottom=False, labelleft=False)
-    ax.scatter(start[1], start[0], marker='^', color='gold', s=200, zorder=5, edgecolors='black', linewidths=0.8)
-    ax.scatter(goal[1], goal[0], marker='X', color='dodgerblue', s=200, zorder=5, edgecolors='black', linewidths=0.8)
-    title = ax.set_title("Searching...", fontsize=16, fontweight='bold', color='gray')
-    ax.legend(handles=_grid_legend(), loc='upper right', bbox_to_anchor=(1.22, 1), borderaxespad=0, fontsize=8)
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
-    def update(frame):
-        if frame < len(sequence):
-            if frame > 0:
-                pr, pc = sequence[frame - 1] // cols, sequence[frame - 1] % cols
-                color_grid[pr][pc] = 2
-            cr, cc = sequence[frame] // cols, sequence[frame] % cols
-            color_grid[cr][cc] = 3
-        else:
-            if found:
-                for n in path:
-                    color_grid[n // cols][n % cols] = 4
-                title.set_text("Path Found ✓");
-                title.set_color('green')
-            else:
-                title.set_text("No Path Found ✗");
-                title.set_color('red')
-        im.set_data(color_grid)
-        return [im, title]
+    def _base_color_grid(self):
+        """Return a (size x size) int array with 0=obstacle, 1=open."""
+        g = np.zeros((self.grid.size, self.grid.size), dtype=int)
+        for node, data in self.grid.G.nodes(data=True):
+            if data['passable']:
+                g[data['row']][data['col']] = 1
+        return g
 
-    _anim = FuncAnimation(fig, update, frames=total_frames, interval=150, blit=False, repeat=False)
-    plt.tight_layout()
-    plt.show()
+    def _node_label(self, node_id):
+        """Format a flat node ID as a readable (row,col) string."""
+        return f"({node_id // self.grid.size},{node_id % self.grid.size})"
 
+    def _stable_tree_pos(self):
+        """
+        Compute a stable hierarchical layout from the full parent map.
+        Called once per animation so node positions don't shift mid-play.
+        """
+        full_tree = nx.DiGraph()
+        full_tree.add_node(self.grid.start)
+        for node_id, par in self.agent.parent.items():
+            if par is not None:
+                full_tree.add_edge(par, node_id)
+        return _hierarchy_pos(full_tree, self.grid.start)
 
-def visualize_tree_search(found, sequence, path, parent, G, start, goal, cols):
-    """
-    Animate the agent's search as a growing directed tree.
+    def _node_colors_for_tree(self, tree, visited_set, discover_set, curr, path_set, done):
+        """
+        Return an ordered list of colors for every node currently in *tree*.
 
-    Replays the search visitation sequence frame by frame using
-    FuncAnimation, incrementally adding nodes and edges to the tree
-    as the agent visits them. Uses a stable top-down hierarchical
-    layout computed upfront from the full traversal tree. On completion,
-    highlights the final path in green if one was found.
-
-    :param found: True if a path from start to goal was found.
-    :type found: bool
-    :param sequence: Node IDs in visitation order, one node added to the
-        tree per animation frame.
-    :type sequence: list[int]
-    :param path: Node IDs forming the path from start to goal inclusive.
-        Empty list if no path was found.
-    :type path: list[int]
-    :param parent: Maps each discovered node ID to its parent node ID.
-        The start node maps to None. Used to construct tree edges.
-    :type parent: dict
-    :param G: Grid graph where nodes carry 'row', 'col', and 'passable'
-        attributes.
-    :type G: networkx.Graph
-    :param start: (row, col) coordinates of the start cell.
-    :type start: tuple
-    :param goal: (row, col) coordinates of the goal cell.
-    :type goal: tuple
-    :param cols: Number of columns in the grid, used to convert node IDs
-        to (row, col) coordinate labels.
-    :type cols: int
-    :return: None
-    """
-    global _anim
-    start_id = start[0] * cols + start[1]
-    goal_id = goal[0] * cols + goal[1]
-    path_set = set(path)
-
-    def label(n):
-        return f"({n // cols},{n % cols})"
-
-    full_tree = nx.DiGraph()
-    full_tree.add_node(start_id)
-    for node_id in sequence[1:]:
-        par = parent.get(node_id)
-        if par is not None:
-            full_tree.add_edge(par, node_id)
-    pos = _hierarchy_pos(full_tree, start_id)
-
-    hold_frames = 15
-    total_frames = len(sequence) + hold_frames
-    fig, ax = plt.subplots(figsize=(9, 7))
-    ax.axis('off')
-
-    def update(frame):
-        ax.cla();
-        ax.axis('off')
-        visible = sequence[:min(frame + 1, len(sequence))]
-        tree = _build_tree(visible, parent, start_id)
-        curr = visible[-1] if frame < len(sequence) else None
-        vis_pos = {n: pos[n] for n in tree.nodes() if n in pos}
-
-        node_colors = []
+        Priority (highest first):
+            done + in path  → mediumseagreen
+            current agent   → tomato
+            BFS discovered  → lightyellow
+            start           → gold
+            goal            → dodgerblue
+            otherwise       → lightblue
+        """
+        colors = []
         for n in tree.nodes():
-            if frame >= len(sequence) and found and n in path_set:
-                node_colors.append('mediumseagreen')
+            if done and n in path_set:
+                colors.append('mediumseagreen')
             elif n == curr:
-                node_colors.append('tomato')
-            elif n == start_id:
-                node_colors.append('gold')
-            elif n == goal_id:
-                node_colors.append('dodgerblue')
+                colors.append('tomato')
+            elif self._is_bfs and n in discover_set and n not in visited_set:
+                colors.append('lightyellow')
+            elif n == self.grid.start:
+                colors.append('gold')
+            elif n == self.grid.goal:
+                colors.append('dodgerblue')
             else:
-                node_colors.append('lightblue')
+                colors.append('lightblue')
+        return colors
 
-        edge_colors = ['mediumseagreen' if (frame >= len(sequence) and found and u in path_set and v in path_set)
-                       else 'gray' for u, v in tree.edges()]
+    # ------------------------------------------------------------------
+    # Public animation methods
+    # ------------------------------------------------------------------
 
-        nx.draw_networkx_nodes(tree, vis_pos, ax=ax, node_color=node_colors, node_size=600, edgecolors='black',
-                               linewidths=0.8)
-        nx.draw_networkx_edges(tree, vis_pos, ax=ax, edge_color=edge_colors, arrows=True, arrowsize=12, width=1.5)
-        nx.draw_networkx_labels(tree, vis_pos, ax=ax, labels={n: label(n) for n in tree.nodes()}, font_size=7,
-                                font_weight='bold')
+    def show_grid(self):
+        """
+        Animate the agent moving through the grid cell by cell.
 
-        if frame >= len(sequence):
-            ax.set_title("Path Found ✓" if found else "No Path Found ✗",
-                         fontsize=16, fontweight='bold', color='green' if found else 'red')
-        else:
-            ax.set_title(f"Tree View — step {frame + 1}/{len(sequence)}", fontsize=16, fontweight='bold', color='gray')
-        ax.legend(handles=_tree_legend(), loc='upper right', fontsize=9)
+        Visited cells turn light blue; the current agent position is tomato.
+        On completion the final path is drawn in green (or red title if none).
+        """
+        global _anim
 
-    _anim = FuncAnimation(fig, update, frames=total_frames, interval=150, blit=False, repeat=False)
-    plt.tight_layout()
-    plt.show()
+        path     = self.agent.reconstruct_path()
+        sequence = self.agent.visit_sequence()
+        events   = self.agent.events
 
+        color_grid = self._base_color_grid()
+        cmap  = CMAP if self._is_bfs else CMAP_DFS
+        vmax  = 5    if self._is_bfs else 4
 
-def visualize_side_by_side(found, events_or_sequence, sequence, path, parent, G, start, goal, cols, is_bfs=False):
-    """
-    Animate the grid view and tree view side by side in a single window.
+        hold_frames   = 15
+        total_frames  = len(events) + hold_frames
+        node_state    = {}   # node_id → 'discovered' | 'agent' | 'visited'  (BFS only)
 
-    Replays the search frame by frame using a single FuncAnimation driving
-    both subplots in sync. The left subplot shows the agent moving through
-    the grid cell by cell. The right subplot shows the search tree growing
-    incrementally. For BFS, discovered candidate nodes are shown in yellow
-    before being visited. On completion, both views highlight the final
-    path in green if one was found.
+        start_row, start_col = self.grid.G.nodes[self.grid.start]['row'], self.grid.G.nodes[self.grid.start]['col']
+        goal_row,  goal_col  = self.grid.G.nodes[self.grid.goal]['row'],  self.grid.G.nodes[self.grid.goal]['col']
 
-    :param found: True if a path from start to goal was found.
-    :type found: bool
-    :param events_or_sequence: For BFS, a list of ('discover' | 'visit', node_id)
-        event tuples driving both the grid and tree animations. For DFS, a
-        flat list of visited node IDs identical to sequence.
-    :type events_or_sequence: list
-    :param sequence: Node IDs in visitation order (visit events only).
-        Used to reconstruct the tree and determine the current agent position.
-    :type sequence: list[int]
-    :param path: Node IDs forming the path from start to goal inclusive.
-        Empty list if no path was found.
-    :type path: list[int]
-    :param parent: Maps each discovered node ID to its parent node ID.
-        The start node maps to None. Used to construct tree edges.
-    :type parent: dict
-    :param G: Grid graph where nodes carry 'row', 'col', and 'passable'
-        attributes.
-    :type G: networkx.Graph
-    :param start: (row, col) coordinates of the start cell.
-    :type start: tuple
-    :param goal: (row, col) coordinates of the goal cell.
-    :type goal: tuple
-    :param cols: Number of columns in the grid, used to convert node IDs
-        back to (row, col) coordinates.
-    :type cols: int
-    :param is_bfs: If True, treats events_or_sequence as a BFS event list
-        and enables the discovered (yellow) color state in both views.
-        If False, treats it as a flat DFS sequence. Defaults to False.
-    :type is_bfs: bool
-    :return: None
-    """
+        fig, ax = plt.subplots(figsize=(8, 8))
+        im      = ax.imshow(color_grid, cmap=cmap, vmin=0, vmax=vmax, interpolation='nearest')
+        ax.set_xticks(np.arange(-0.5, self.grid.size, 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, self.grid.size, 1), minor=True)
+        ax.grid(which='minor', color='gray', linewidth=0.5)
+        ax.tick_params(which='both', bottom=False, left=False, labelbottom=False, labelleft=False)
+        ax.scatter(start_col, start_row, marker='^', color='gold',       s=200, zorder=5, edgecolors='black', linewidths=0.8)
+        ax.scatter(goal_col,  goal_row,  marker='X', color='dodgerblue', s=200, zorder=5, edgecolors='black', linewidths=0.8)
+        title = ax.set_title("Searching...", fontsize=16, fontweight='bold', color='gray')
+        ax.legend(handles=_grid_legend(self._is_bfs), loc='upper right',
+                  bbox_to_anchor=(1.22, 1), borderaxespad=0, fontsize=8)
 
-    global _anim
-    start_id = start[0] * cols + start[1]
-    goal_id = goal[0] * cols + goal[1]
-    path_set = set(path)
-    rows = max(d['row'] for _, d in G.nodes(data=True)) + 1
-
-    def label(n):
-        return f"({n // cols},{n % cols})"
-
-    # Grid setup
-    base_grid = np.zeros((rows, cols), dtype=int)
-    for node, data in G.nodes(data=True):
-        if data['passable']:
-            base_grid[data['row']][data['col']] = 1
-    color_grid = base_grid.copy()
-    cmap = CMAP if is_bfs else CMAP_DFS
-    vmax = 5 if is_bfs else 4
-
-    # Tree layout — built from visit-only sequence for stable pos
-    full_tree = nx.DiGraph()
-    full_tree.add_node(start_id)
-    for node_id, par in parent.items():
-        if par is not None:
-            full_tree.add_edge(par, node_id)
-    pos = _hierarchy_pos(full_tree, start_id)
-
-    events = events_or_sequence  # for BFS: list of (type, node); for DFS: list of node ints
-    hold_frames = 15
-    total_frames = len(events) + hold_frames
-
-    # Track per-node state for BFS coloring
-    node_state = {}  # node_id -> 'discovered' | 'visited'
-
-    fig, (ax_grid, ax_tree) = plt.subplots(1, 2, figsize=(18, 8))
-    manager = plt.get_current_fig_manager()
-    manager.full_screen_toggle()
-
-    fig.suptitle("Search Visualization", fontsize=18, fontweight='bold')
-
-    im = ax_grid.imshow(color_grid, cmap=cmap, vmin=0, vmax=vmax, interpolation='nearest')
-    ax_grid.set_xticks(np.arange(-0.5, cols, 1), minor=True)
-    ax_grid.set_yticks(np.arange(-0.5, rows, 1), minor=True)
-    ax_grid.grid(which='minor', color='gray', linewidth=0.5)
-    ax_grid.tick_params(which='both', bottom=False, left=False, labelbottom=False, labelleft=False)
-    ax_grid.scatter(start[1], start[0], marker='^', color='gold', s=200, zorder=5, edgecolors='black', linewidths=0.8)
-    ax_grid.scatter(goal[1], goal[0], marker='X', color='dodgerblue', s=200, zorder=5, edgecolors='black',
-                    linewidths=0.8)
-    grid_title = ax_grid.set_title("Grid View — Searching...", fontsize=13, fontweight='bold', color='gray')
-    ax_grid.legend(handles=_grid_legend(include_discovered=is_bfs), loc='upper right',
-                   bbox_to_anchor=(1.22, 1), borderaxespad=0, fontsize=8)
-    ax_tree.axis('off')
-
-    def update(frame):
-        # ---- Grid update ----
-        if frame < len(events):
-            if is_bfs:
-                event_type, node_id = events[frame]
-                r, c = node_id // cols, node_id % cols
-                if event_type == 'discover':
-                    node_state[node_id] = 'discovered'
-                    color_grid[r][c] = 5  # light yellow
-                elif event_type == 'visit':
-                    # clear previous agent marker
-                    prev_agent = [n for n, s in node_state.items() if s == 'agent']
-                    for n in prev_agent:
-                        node_state[n] = 'visited'
-                        pr, pc = n // cols, n % cols
+        def update(frame):
+            if frame < len(events):
+                if self._is_bfs:
+                    event_type, node_id = events[frame]
+                    r, c = self.grid.G.nodes[node_id]['row'], self.grid.G.nodes[node_id]['col']
+                    if event_type == 'discover':
+                        node_state[node_id] = 'discovered'
+                        color_grid[r][c] = 5
+                    elif event_type == 'visit':
+                        for n, s in list(node_state.items()):
+                            if s == 'agent':
+                                node_state[n] = 'visited'
+                                nr, nc = self.grid.G.nodes[n]['row'], self.grid.G.nodes[n]['col']
+                                color_grid[nr][nc] = 2
+                        node_state[node_id] = 'agent'
+                        color_grid[r][c] = 3
+                else:
+                    # DFS — only 'visit' events; step through sequence
+                    _, node_id = events[frame]
+                    if frame > 0:
+                        _, prev = events[frame - 1]
+                        pr, pc = self.grid.G.nodes[prev]['row'], self.grid.G.nodes[prev]['col']
                         color_grid[pr][pc] = 2
-                    node_state[node_id] = 'agent'
-                    color_grid[r][c] = 3  # tomato (agent)
-            else:
-                # DFS — plain sequence
-                if frame > 0:
-                    prev = events[frame - 1]
-                    color_grid[prev // cols][prev % cols] = 2
-                curr = events[frame]
-                color_grid[curr // cols][curr % cols] = 3
+                    r, c = self.grid.G.nodes[node_id]['row'], self.grid.G.nodes[node_id]['col']
+                    color_grid[r][c] = 3
 
-            grid_title.set_text(f"Grid View — step {frame + 1}/{len(events)}")
-            grid_title.set_color('gray')
-        else:
-            if found:
-                for n in path:
-                    color_grid[n // cols][n % cols] = 4
-                grid_title.set_text("Grid View — Path Found ✓");
-                grid_title.set_color('green')
+                title.set_text(f"Searching — step {frame + 1}/{len(events)}")
+                title.set_color('gray')
             else:
-                grid_title.set_text("Grid View — No Path Found ✗");
-                grid_title.set_color('red')
-        im.set_data(color_grid)
+                if self.agent.found:
+                    for n in path:
+                        nr, nc = self.grid.G.nodes[n]['row'], self.grid.G.nodes[n]['col']
+                        color_grid[nr][nc] = 4
+                    title.set_text("Path Found ✓");  title.set_color('green')
+                else:
+                    title.set_text("No Path Found ✗"); title.set_color('red')
+            im.set_data(color_grid)
+            return [im, title]
 
-        # ---- Tree update ----
-        ax_tree.cla();
+        _anim = FuncAnimation(fig, update, frames=total_frames, interval=150, blit=False, repeat=False)
+        plt.tight_layout()
+        plt.show()
+
+    def show_tree(self):
+        """
+        Animate the search as a growing directed tree.
+
+        Uses a stable hierarchical layout computed from the full parent map
+        so nodes don't shift position as the tree grows. For BFS, discovered
+        (frontier) nodes appear in yellow before turning light blue on visit.
+        """
+        global _anim
+
+        path      = self.agent.reconstruct_path()
+        path_set  = set(path)
+        events    = self.agent.events
+        pos       = self._stable_tree_pos()
+
+        hold_frames  = 15
+        total_frames = len(events) + hold_frames
+
+        fig, ax = plt.subplots(figsize=(9, 7))
+        ax.axis('off')
+
+        def update(frame):
+            ax.cla(); ax.axis('off')
+            done = frame >= len(events)
+
+            visible       = events[:min(frame + 1, len(events))]
+            visited_set   = {n for t, n in visible if t == 'visit'}
+            discover_set  = {n for t, n in visible if t == 'discover'} if self._is_bfs else set()
+
+            tree     = _build_tree(self.agent, frame)
+            curr     = next((n for t, n in reversed(visible) if t == 'visit'), None) if not done else None
+            vis_pos  = {n: pos[n] for n in tree.nodes() if n in pos}
+
+            node_colors  = self._node_colors_for_tree(tree, visited_set, discover_set, curr, path_set, done)
+            edge_colors  = [
+                'mediumseagreen' if (done and self.agent.found and u in path_set and v in path_set) else 'gray'
+                for u, v in tree.edges()
+            ]
+
+            nx.draw_networkx_nodes(tree, vis_pos, ax=ax, node_color=node_colors, node_size=600, edgecolors='black', linewidths=0.8)
+            nx.draw_networkx_edges(tree, vis_pos, ax=ax, edge_color=edge_colors, arrows=True, arrowsize=12, width=1.5)
+            nx.draw_networkx_labels(tree, vis_pos, ax=ax, labels={n: self._node_label(n) for n in tree.nodes()}, font_size=7, font_weight='bold')
+
+            if done:
+                ax.set_title("Path Found ✓" if self.agent.found else "No Path Found ✗",
+                             fontsize=16, fontweight='bold', color='green' if self.agent.found else 'red')
+            else:
+                ax.set_title(f"Tree View — step {frame + 1}/{len(events)}", fontsize=16, fontweight='bold', color='gray')
+
+            ax.legend(handles=_tree_legend(self._is_bfs), loc='upper right', fontsize=9)
+
+        _anim = FuncAnimation(fig, update, frames=total_frames, interval=150, blit=False, repeat=False)
+        plt.tight_layout()
+        plt.show()
+
+    def show_all(self):
+        """
+        Animate the grid view and tree view side by side in a single window.
+
+        Both subplots are driven by the same FuncAnimation so they stay in sync.
+        The left panel shows the grid; the right shows the growing search tree.
+        """
+        global _anim
+
+        path      = self.agent.reconstruct_path()
+        path_set  = set(path)
+        events    = self.agent.events
+        pos       = self._stable_tree_pos()
+
+        color_grid  = self._base_color_grid()
+        cmap        = CMAP if self._is_bfs else CMAP_DFS
+        vmax        = 5    if self._is_bfs else 4
+        node_state  = {}
+
+        start_row, start_col = self.grid.G.nodes[self.grid.start]['row'], self.grid.G.nodes[self.grid.start]['col']
+        goal_row,  goal_col  = self.grid.G.nodes[self.grid.goal]['row'],  self.grid.G.nodes[self.grid.goal]['col']
+
+        hold_frames  = 15
+        total_frames = len(events) + hold_frames
+
+        fig, (ax_grid, ax_tree) = plt.subplots(1, 2, figsize=(18, 8))
+        manager = plt.get_current_fig_manager()
+        manager.full_screen_toggle()
+        fig.suptitle("Search Visualization", fontsize=18, fontweight='bold')
+
+        im = ax_grid.imshow(color_grid, cmap=cmap, vmin=0, vmax=vmax, interpolation='nearest')
+        ax_grid.set_xticks(np.arange(-0.5, self.grid.size, 1), minor=True)
+        ax_grid.set_yticks(np.arange(-0.5, self.grid.size, 1), minor=True)
+        ax_grid.grid(which='minor', color='gray', linewidth=0.5)
+        ax_grid.tick_params(which='both', bottom=False, left=False, labelbottom=False, labelleft=False)
+        ax_grid.scatter(start_col, start_row, marker='^', color='gold',       s=200, zorder=5, edgecolors='black', linewidths=0.8)
+        ax_grid.scatter(goal_col,  goal_row,  marker='X', color='dodgerblue', s=200, zorder=5, edgecolors='black', linewidths=0.8)
+        grid_title = ax_grid.set_title("Grid View — Searching...", fontsize=13, fontweight='bold', color='gray')
+        ax_grid.legend(handles=_grid_legend(self._is_bfs), loc='upper right',
+                       bbox_to_anchor=(1.22, 1), borderaxespad=0, fontsize=8)
         ax_tree.axis('off')
 
-        # Build tree from visits only up to this frame
-        if is_bfs:
-            visited_so_far = [n for t, n in events[:min(frame + 1, len(events))] if t == 'visit']
-            discover_so_far = {n for t, n in events[:min(frame + 1, len(events))] if t == 'discover'}
-        else:
-            visited_so_far = events[:min(frame + 1, len(events))]
-            discover_so_far = set()
+        def update(frame):
+            done = frame >= len(events)
 
-        tree = nx.DiGraph()
-        tree.add_node(start_id)
-        all_shown = set(visited_so_far) | discover_so_far
-        for node_id in all_shown:
-            if node_id == start_id: continue
-            par = parent.get(node_id)
-            if par is not None:
-                tree.add_edge(par, node_id)
+            # ---- Grid panel ----
+            if not done:
+                if self._is_bfs:
+                    event_type, node_id = events[frame]
+                    r, c = self.grid.G.nodes[node_id]['row'], self.grid.G.nodes[node_id]['col']
+                    if event_type == 'discover':
+                        node_state[node_id] = 'discovered'
+                        color_grid[r][c] = 5
+                    elif event_type == 'visit':
+                        for n, s in list(node_state.items()):
+                            if s == 'agent':
+                                node_state[n] = 'visited'
+                                nr, nc = self.grid.G.nodes[n]['row'], self.grid.G.nodes[n]['col']
+                                color_grid[nr][nc] = 2
+                        node_state[node_id] = 'agent'
+                        color_grid[r][c] = 3
+                else:
+                    _, node_id = events[frame]
+                    if frame > 0:
+                        _, prev = events[frame - 1]
+                        pr, pc = self.grid.G.nodes[prev]['row'], self.grid.G.nodes[prev]['col']
+                        color_grid[pr][pc] = 2
+                    r, c = self.grid.G.nodes[node_id]['row'], self.grid.G.nodes[node_id]['col']
+                    color_grid[r][c] = 3
 
-        curr = visited_so_far[-1] if visited_so_far and frame < len(events) else None
-        vis_pos = {n: pos[n] for n in tree.nodes() if n in pos}
-
-        node_colors = []
-        for n in tree.nodes():
-            if frame >= len(events) and found and n in path_set:
-                node_colors.append('mediumseagreen')
-            elif n == curr:
-                node_colors.append('tomato')
-            elif is_bfs and n in discover_so_far and n not in visited_so_far:
-                node_colors.append('lightyellow')
-            elif n == start_id:
-                node_colors.append('gold')
-            elif n == goal_id:
-                node_colors.append('dodgerblue')
+                grid_title.set_text(f"Grid View — step {frame + 1}/{len(events)}")
+                grid_title.set_color('gray')
             else:
-                node_colors.append('lightblue')
+                if self.agent.found:
+                    for n in path:
+                        nr, nc = self.grid.G.nodes[n]['row'], self.grid.G.nodes[n]['col']
+                        color_grid[nr][nc] = 4
+                    grid_title.set_text("Grid View — Path Found ✓"); grid_title.set_color('green')
+                else:
+                    grid_title.set_text("Grid View — No Path Found ✗"); grid_title.set_color('red')
+            im.set_data(color_grid)
 
-        edge_colors = ['mediumseagreen' if (frame >= len(events) and found and u in path_set and v in path_set)
-                       else 'gray' for u, v in tree.edges()]
+            # ---- Tree panel ----
+            ax_tree.cla(); ax_tree.axis('off')
 
-        nx.draw_networkx_nodes(tree, vis_pos, ax=ax_tree, node_color=node_colors, node_size=500, edgecolors='black',
-                               linewidths=0.8)
-        nx.draw_networkx_edges(tree, vis_pos, ax=ax_tree, edge_color=edge_colors, arrows=True, arrowsize=12, width=1.5)
-        nx.draw_networkx_labels(tree, vis_pos, ax=ax_tree, labels={n: label(n) for n in tree.nodes()}, font_size=7,
-                                font_weight='bold')
+            visible      = events[:min(frame + 1, len(events))]
+            visited_set  = {n for t, n in visible if t == 'visit'}
+            discover_set = {n for t, n in visible if t == 'discover'} if self._is_bfs else set()
 
-        if frame >= len(events):
-            ax_tree.set_title("Tree View — Path Found ✓" if found else "Tree View — No Path Found ✗",
-                              fontsize=13, fontweight='bold', color='green' if found else 'red')
-        else:
-            ax_tree.set_title(f"Tree View — step {frame + 1}/{len(events)}", fontsize=13, fontweight='bold',
-                              color='gray')
+            tree    = _build_tree(self.agent, frame)
+            curr    = next((n for t, n in reversed(visible) if t == 'visit'), None) if not done else None
+            vis_pos = {n: pos[n] for n in tree.nodes() if n in pos}
 
-        legend = _tree_legend() if is_bfs else _tree_legend()[2:]  # drop discovered entry for DFS
-        ax_tree.legend(handles=legend, loc='upper right', fontsize=8)
+            node_colors = self._node_colors_for_tree(tree, visited_set, discover_set, curr, path_set, done)
+            edge_colors = [
+                'mediumseagreen' if (done and self.agent.found and u in path_set and v in path_set) else 'gray'
+                for u, v in tree.edges()
+            ]
 
-    _anim = FuncAnimation(fig, update, frames=total_frames, interval=250, blit=False, repeat=False)
-    plt.tight_layout()
-    plt.show()
+            nx.draw_networkx_nodes(tree, vis_pos, ax=ax_tree, node_color=node_colors, node_size=500, edgecolors='black', linewidths=0.8)
+            nx.draw_networkx_edges(tree, vis_pos, ax=ax_tree, edge_color=edge_colors, arrows=True, arrowsize=12, width=1.5)
+            nx.draw_networkx_labels(tree, vis_pos, ax=ax_tree, labels={n: self._node_label(n) for n in tree.nodes()}, font_size=7, font_weight='bold')
+
+            if done:
+                ax_tree.set_title("Tree View — Path Found ✓" if self.agent.found else "Tree View — No Path Found ✗",
+                                  fontsize=13, fontweight='bold', color='green' if self.agent.found else 'red')
+            else:
+                ax_tree.set_title(f"Tree View — step {frame + 1}/{len(events)}", fontsize=13, fontweight='bold', color='gray')
+
+            ax_tree.legend(handles=_tree_legend(self._is_bfs), loc='upper right', fontsize=8)
+
+        _anim = FuncAnimation(fig, update, frames=total_frames, interval=250, blit=False, repeat=False)
+        plt.tight_layout()
+        plt.show()

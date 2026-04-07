@@ -1,24 +1,26 @@
-from environment_generation import create_grid, generate_obstacles, get_start_and_goal, grid_to_graph
-from agent import bfs, dfs
-from search_visualization import visualize_side_by_side
+import random
 
+from environment_generation import Grid
+from agent import BFSAgent, DFSAgent
+from search_visualization import Visualizer
 
-# Create grid with obstacles, start & end
-grid_dim = 20
-grid = generate_obstacles(create_grid(grid_dim))
-start, goal = get_start_and_goal(grid)
+random.seed(42)
 
-# Matrix --> NetworkX Graph
-grid_graph = grid_to_graph(grid)
+# Build grid environment (nodes, obstacles, edges, start & goal all set in __init__)
+grid = Grid(size=5)
 
 # BFS agent
-found, events, sequence, path, parent = bfs(grid_graph, start, goal, grid_dim)
+bfs_agent = BFSAgent(grid)
+bfs_agent.search()
+bfs_vis = Visualizer(bfs_agent)
+# bfs_vis.show_grid()
+# bfs_vis.show_tree()
+bfs_vis.show_all()
 
-# Call visualization animation for BFS
-# visualize_side_by_side(found, events, sequence, path, parent, grid_graph, start, goal, grid_dim, True)
-
-# DFS agent
-found, sequence, path, parent = dfs(grid_graph, start, goal, grid_dim)
-
-# Call visualization animation for DFS
-visualize_side_by_side(found, sequence, sequence, path, parent, grid_graph, start, goal, grid_dim)
+# # DFS agent
+dfs_agent = DFSAgent(grid)
+dfs_agent.search()
+dfs_vis = Visualizer(dfs_agent)
+# dfs_vis.show_grid()
+# dfs_vis.show_tree()
+dfs_vis.show_all()
