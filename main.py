@@ -19,15 +19,14 @@ from heuristics import manhattan, haversine_graph, euclidean_graph
 from metrics import run_with_metrics
 from benchmarking import (
     single_run, batch_suite,
-    CITY_AGENT_FACTORIES, RAND_AGENT_FACTORIES,
+    RAND_AGENT_FACTORIES,
 )
 
 # ==========================================================================
 # TOP-LEVEL MODE
 # ==========================================================================
-RUN_MODE   = 'batch'   # 'single' | 'batch'
+RUN_MODE   = 'single'   # 'single' | 'batch'
 GRAPH      = 'city'     # for single: 'city' | 'random' | 'grid'
-BATCH_GRAPH = 'random'  # for batch:  'city' | 'random'
 
 # ==========================================================================
 # SINGLE RUN
@@ -53,41 +52,28 @@ if RUN_MODE == 'single':
         single_run(agent, visualize=True)
 
 # ==========================================================================
-# BATCH COMPARE
+# BATCH COMPARE  (random graphs only)
+# Batch benchmarking only applies to RandomGraph — the city graph is
+# deterministic (fixed nodes, fixed weights) so running it with different
+# seeds produces identical results.  Varying the seed only changes the
+# random graph structure, giving meaningful mean ± std statistics.
+#
+# 3 complexity settings vary the Poisson branching factor b.
+# Note: b_obs ≈ 2×b because each undirected edge is wired from both
+# endpoints, so observed mean degree ≈ 2b.  Paths get shorter as the
+# graph gets denser (more edges = more shortcuts).
 # ==========================================================================
 elif RUN_MODE == 'batch':
-
-    if BATCH_GRAPH == 'random':
-        # 3 complexity settings varying branching factor b
-        batch_suite(
-            complexity_settings=[
-                {'b': 2, 'n': 30, 'label': 'sparse  b=2',
-                 'param_value': 2, 'param_name': 'branching factor b'},
-                {'b': 4, 'n': 30, 'label': 'medium  b=4',
-                 'param_value': 4, 'param_name': 'branching factor b'},
-                {'b': 7, 'n': 30, 'label': 'dense   b=7',
-                 'param_value': 7, 'param_name': 'branching factor b'},
-            ],
-            agent_factories=RAND_AGENT_FACTORIES,
-            n_seeds=5,
-            graph_type='random',
-        )
-
-    elif BATCH_GRAPH == 'city':
-        # 3 complexity settings varying goal depth (start/goal pairs)
-        # Pairs chosen to give short / medium / long solution paths
-        batch_suite(
-            complexity_settings=[
-                {'start': 0,  'goal': 2,  'label': 'shallow  (Abilene→Anthony)',
-                 'param_value': 2, 'param_name': 'goal depth (hops)'},
-                {'start': 0,  'goal': 30, 'label': 'medium   (Abilene→Newton)',
-                 'param_value': 5, 'param_name': 'goal depth (hops)'},
-                {'start': 39, 'goal': 10, 'label': 'deep     (Topeka→Coldwater)',
-                 'param_value': 9, 'param_name': 'goal depth (hops)'},
-            ],
-            agent_factories=CITY_AGENT_FACTORIES,
-            n_seeds=5,
-            graph_type='city',
-            coord_path='coordinates.csv',
-            adj_path='Adjacencies.txt',
-        )
+    batch_suite(
+        complexity_settings=[
+            {'b': 2, 'n': 30, 'label': 'sparse  (b=2, b_obs≈4)',
+             'param_value': 2, 'param_name': 'Poisson b (b_obs≈2b)'},
+            {'b': 4, 'n': 30, 'label': 'medium  (b=4, b_obs≈8)',
+             'param_value': 4, 'param_name': 'Poisson b (b_obs≈2b)'},
+            {'b': 7, 'n': 30, 'label': 'dense   (b=7, b_obs≈14)',
+             'param_value': 7, 'param_name': 'Poisson b (b_obs≈2b)'},
+        ],
+        agent_factories=RAND_AGENT_FACTORIES,
+        n_seeds=5,
+        graph_type='random',
+    )

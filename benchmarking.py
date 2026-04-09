@@ -85,7 +85,8 @@ def _rand_factories():
     ]
 
 # Callable so factories are built fresh each call (avoids closure issues)
-CITY_AGENT_FACTORIES = _city_factories
+# Note: CITY_AGENT_FACTORIES removed — city graphs are deterministic, batch
+# benchmarking only applies to RandomGraph.
 RAND_AGENT_FACTORIES = _rand_factories
 
 
@@ -179,6 +180,10 @@ def single_run(agent, visualize: bool = True):
     """
     Run one agent, collect metrics, optionally animate.
 
+    For IDDFSAgent: metrics are collected via search() (pure benchmarking
+    mode, final iteration only).  If visualizing, search_verbose() is then
+    called separately so the animation shows each deepening iteration.
+
     Parameters
     ----------
     agent     : any Agent subclass (already configured with a grid/graph)
@@ -188,9 +193,13 @@ def single_run(agent, visualize: bool = True):
     -------
     MetricsResult
     """
-    result = run_with_metrics(agent)
+    from agent import IDDFSAgent
+    result = run_with_metrics(agent, method='search')
 
     if visualize:
+        # IDDFS needs search_verbose() so the animator has per-iteration events
+        if isinstance(agent, IDDFSAgent):
+            agent.search_verbose()
         from search_visualization import Visualizer
         Visualizer(agent).show_all(metrics=result)
 
@@ -239,9 +248,9 @@ def batch_compare(graph_factory, agent_factories,
         graph = graph_factory(seed)
         for agent_name, make_agent in agent_factories:
             agent = make_agent(graph)
-            # Use search_verbose for IDDFS so events are fully populated
-            method = 'search_verbose' if 'IDDFS' in agent_name else 'search'
-            result = run_with_metrics(agent, method=method)
+            # Always use search() for benchmarking — search_verbose() accumulates
+            # all iterations' events which inflates nodes_expanded and memory.
+            result = run_with_metrics(agent, method='search')
             results[agent_name].append(result)
             done += 1
             print(f'    [{done}/{total}] {agent_name} seed={seed} '
@@ -259,28 +268,27 @@ def batch_compare(graph_factory, agent_factories,
 def batch_suite(complexity_settings: list,
                 agent_factories,
                 n_seeds: int = 5,
-                graph_type: str = 'random',
-                coord_path: str = 'coordinates.csv',
-                adj_path:   str = 'Adjacencies.txt') -> list[BatchReport]:
+                graph_type: str = 'random') -> list[BatchReport]:
     """
     Run batch_compare across multiple complexity settings and produce
     a comparison table and charts.
 
+    Only random graphs are supported — city graphs are deterministic so
+    repeat runs with different seeds produce identical results.
+
     Parameters
     ----------
-    complexity_settings : list of dicts, each with keys:
-        For random graphs: 'b', 'n', 'label', and optionally 'weight_range'
-        For city graph:    'start', 'goal', 'label'
-        All settings must include 'param_value' (x-axis) and 'param_name'.
+    complexity_settings : list of dicts with keys:
+        'b'           — Poisson branching factor
+        'n'           — number of nodes
+        'label'       — display label for table/chart
+        'param_value' — x-axis value for line chart
+        'param_name'  — x-axis label
 
     agent_factories : callable returning list of (name, factory) tuples
-        Pass RAND_AGENT_FACTORIES or CITY_AGENT_FACTORIES.
+        Pass RAND_AGENT_FACTORIES.
 
     n_seeds : int   runs per setting per agent (default 5)
-
-    graph_type : 'random' | 'city'
-
-    coord_path, adj_path : paths for CityGraph (ignored for random)
 
     Returns
     -------
@@ -324,17 +332,8 @@ def batch_suite(complexity_settings: list,
                 g.start, g.goal = best_pair
                 return g
 
-        elif graph_type == 'city':
-            start_id = setting.get('start', 0)
-            goal_id  = setting.get('goal',  30)
-
-            def make_graph(seed, _s=start_id, _t=goal_id):
-                from graph_sources import CityGraph
-                g = CityGraph(coord_path, adj_path, interactive=False)
-                g.start, g.goal = _s, _t
-                return g
         else:
-            raise ValueError(f"Unknown graph_type: {graph_type!r}")
+            raise ValueError(f"Unknown graph_type: {graph_type!r}  (only 'random' supported for batch)")
 
         report = batch_compare(
             graph_factory   = make_graph,
