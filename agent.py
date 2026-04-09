@@ -52,26 +52,30 @@ from abc import ABC, abstractmethod
 from collections import deque
 import heapq
 from environment_generation import Grid
+from heuristics import manhattan as _default_manhattan
 
 
 def _manhattan(a: int, b: int, size: int) -> int:
     """
     Manhattan distance between flat node IDs a and b on a (size x size) grid.
-
-    Parameters
-    ----------
-    a, b : int
-        Flat node IDs (r * size + c).
-    size : int
-        Grid side length.
-
-    Returns
-    -------
-    int
+    Kept for internal backward-compat; agents now accept a heuristic callable.
     """
     ar, ac = divmod(a, size)
     br, bc = divmod(b, size)
     return abs(ar - br) + abs(ac - bc)
+
+
+def _edge_weight(env, u: int, v: int) -> float:
+    """
+    Return the edge weight between u and v in any environment type.
+
+    Grid environments use unit cost (1) unless edges carry a 'weight'
+    attribute.  CityGraph and RandomGraph always carry weights.
+    """
+    if hasattr(env, 'edge_weight'):
+        return env.edge_weight(u, v)
+    data = env.G[u][v]
+    return float(data.get('weight', 1))
 
 
 class Agent(ABC):
@@ -102,11 +106,32 @@ class Agent(ABC):
 
     shows_discovered: bool = False
 
-    def __init__(self, grid: Grid):
+    def __init__(self, grid, heuristic=None):
+        """
+        Parameters
+        ----------
+        grid      : Grid | CityGraph | RandomGraph
+        heuristic : callable(a, b, env) -> float, optional
+            Injected heuristic.  None means use the agent-level default.
+        """
         self.grid = grid
+        self.heuristic = heuristic
         self.parent: dict = {}
         self.events: list = []
-        self.visit_order: dict = {}   # node_id → 1-based visit order index
+        self.visit_order: dict = {}
+
+    def _h(self, a: int, b: int) -> float:
+        """Evaluate heuristic h(a -> goal) using injected fn or default."""
+        if self.heuristic is not None:
+            return float(self.heuristic(a, b, self.grid))
+        env = self.grid
+        if hasattr(env, 'pos'):
+            if 'lat' in env.G.nodes[a]:
+                from heuristics import haversine_graph
+                return haversine_graph(a, b, env)
+            from heuristics import euclidean_graph
+            return euclidean_graph(a, b, env)
+        return _default_manhattan(a, b, env)
 
     @abstractmethod
     def search(self):
@@ -429,7 +454,7 @@ class GreedyAgent(Agent):
         self.h_cost  = {}
         self.events  = [('discover', self.grid.start)]
 
-        h_start = _manhattan(self.grid.start, self.grid.goal, self.grid.size)
+        h_start = self._h(self.grid.start, self.grid.goal)
         self.h_cost[self.grid.start] = h_start
         heap    = [(h_start, self.grid.start)]
         visited = set()
@@ -449,7 +474,7 @@ class GreedyAgent(Agent):
             for neighbor in self.grid.neighbors_clockwise(curr):
                 if neighbor not in visited and neighbor not in self.parent:
                     self.parent[neighbor] = curr
-                    h = _manhattan(neighbor, self.grid.goal, self.grid.size)
+                    h = self._h(neighbor, self.grid.goal)
                     self.h_cost[neighbor] = h
                     self.events.append(('discover', neighbor))
                     heapq.heappush(heap, (h, neighbor))
@@ -494,11 +519,11 @@ class AStarAgent(Agent):
         ('visit',    node_id) : node popped and committed as optimal
         """
         self.parent = {self.grid.start: None}
-        self.g_cost = {self.grid.start: 0}
+        self.g_cost = {self.grid.start: 0.0}
         self.h_cost = {}
         self.events = [('discover', self.grid.start)]
 
-        h_start = _manhattan(self.grid.start, self.grid.goal, self.grid.size)
+        h_start = self._h(self.grid.start, self.grid.goal)
         self.h_cost[self.grid.start] = h_start
         heap    = [(h_start, self.grid.start)]
         visited = set()
@@ -519,12 +544,13 @@ class AStarAgent(Agent):
                 if neighbor in visited:
                     continue
 
-                tentative_g = self.g_cost[curr] + 1  # uniform edge cost
+                step_cost = _edge_weight(self.grid, curr, neighbor)
+                tentative_g = self.g_cost[curr] + step_cost
 
                 if tentative_g < self.g_cost.get(neighbor, float('inf')):
                     self.parent[neighbor] = curr
                     self.g_cost[neighbor] = tentative_g
-                    h = _manhattan(neighbor, self.grid.goal, self.grid.size)
+                    h = self._h(neighbor, self.grid.goal)
                     self.h_cost[neighbor] = h
                     self.events.append(('discover', neighbor))
                     heapq.heappush(heap, (tentative_g + h, neighbor))

@@ -193,6 +193,8 @@ class Visualizer:
         self.agent   = agent
         self.grid    = agent.grid
         self._shows_discovered = agent.shows_discovered
+        # True when the environment is a CityGraph or RandomGraph (not a Grid)
+        self._is_graph = hasattr(self.grid, 'pos') and hasattr(self.grid, 'labels')
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -207,7 +209,9 @@ class Visualizer:
         return g
 
     def _node_label(self, node_id):
-        """Format a flat node ID as a readable (row,col) string."""
+        """Return a readable label for a node in any environment type."""
+        if self._is_graph:
+            return self.grid.labels.get(node_id, str(node_id))
         return f"({node_id // self.grid.size},{node_id % self.grid.size})"
 
     def _stable_tree_pos(self):
@@ -405,7 +409,23 @@ class Visualizer:
         plt.tight_layout()
         plt.show()
 
-    def show_all(self):
+    def show_all(self, metrics=None):
+        """
+        Animate the search.  Routes to graph or grid implementation
+        depending on the environment type.
+
+        Parameters
+        ----------
+        metrics : MetricsResult, optional
+            If provided (from run_with_metrics()), a summary panel is shown
+            when the animation completes.
+        """
+        if self._is_graph:
+            self._show_all_graph(metrics=metrics)
+        else:
+            self._show_all_grid(metrics=metrics)
+
+    def _show_all_grid(self, metrics=None):
         """
         Animate grid, search tree, and open-list widget side by side.
 
@@ -950,6 +970,568 @@ class Visualizer:
         # ------------------------------------------------------------------
         # Launch
         # ------------------------------------------------------------------
+        _anim = FuncAnimation(fig, _anim_update, interval=250,
+                              cache_frame_data=False, repeat=False)
+        plt.show()
+
+    # ------------------------------------------------------------------
+    # Graph visualization (CityGraph / RandomGraph)
+    # ------------------------------------------------------------------
+
+    def _show_all_graph(self, metrics=None):
+        """
+        Animate a CityGraph or RandomGraph search on the actual network.
+
+        Layout
+        ------
+        Left (wide)  : the full graph — edges gray, nodes color-coded by
+                       state, visited edges drawn in blue as traversed,
+                       path edges highlighted green on completion.
+        Right        : live open list (queue / stack / priority queue).
+        Bottom strip : Play/Pause, Step, Restart, Speed slider.
+        Info box     : hover details — city name, parent, visit order,
+                       g/h/f costs where available.
+
+        No tree panel — the graph IS the search space, so watching nodes
+        and edges light up on the real map is more informative than an
+        abstract hierarchy.
+        """
+        global _anim
+        from agent import BFSAgent, DFSAgent, IDDFSAgent, GreedyAgent, AStarAgent
+        from matplotlib.widgets import Button, Slider
+
+        env      = self.grid
+        G        = env.G
+        pos      = {n: (float(xy[0]), float(xy[1])) for n, xy in env.pos.items()}
+        labels   = env.labels
+
+        path      = self.agent.reconstruct_path()
+        path_set  = set(path)
+        path_cost = (sum(G[path[i]][path[i+1]]['weight'] for i in range(len(path)-1))
+                     if len(path) > 1 else 0.0)
+        is_city   = hasattr(G.nodes[env.start], '__contains__') and 'lat' in G.nodes[env.start]
+
+        events       = self.agent.events
+        hold_frames  = 20
+        total_frames = len(events) + hold_frames
+        state        = {'frame': 0, 'playing': True, 'metrics_drawn': False}
+
+        self.agent.visit_sequence()
+        g_cost = getattr(self.agent, 'g_cost', None)
+        h_cost = getattr(self.agent, 'h_cost', None)
+
+        # Per-node display state
+        node_state   = {n: 'unvisited' for n in G.nodes()}
+        hover_parent = {}
+
+        # Track which edges have been traversed (for progressive edge coloring)
+        traversed_edges = set()   # set of frozenset({u,v})
+        path_edges_drawn = []     # matplotlib artists added at completion
+
+        # ---- Open-list mirror ------------------------------------------------
+        open_list = []
+        if isinstance(self.agent, BFSAgent):
+            _ol_title = 'Queue  (front → back)'
+            def _ol_add(n):
+                open_list.append(n)
+            def _ol_remove(n):
+                if n in open_list: open_list.remove(n)
+            def _ol_label(n):
+                return labels.get(n, str(n))
+
+        elif isinstance(self.agent, (DFSAgent, IDDFSAgent)):
+            _ol_title = 'Stack  (top → bottom)'
+            def _ol_add(n):
+                open_list.append(n)
+            def _ol_remove(n):
+                if n in open_list: open_list.remove(n)
+            def _ol_label(n):
+                return labels.get(n, str(n))
+
+        elif isinstance(self.agent, GreedyAgent):
+            _ol_title = 'Open List  ↑ h(n)'
+            def _ol_add(n):
+                if n in open_list: open_list.remove(n)
+                open_list.append(n)
+                open_list.sort(key=lambda x: h_cost.get(x, float('inf')))
+            def _ol_remove(n):
+                if n in open_list: open_list.remove(n)
+            def _ol_label(n):
+                h   = h_cost.get(n)
+                lbl = labels.get(n, str(n))
+                return f'{lbl}  h={h:.1f}' if isinstance(h, float) else lbl
+
+        else:  # AStarAgent
+            _ol_title = 'Open List  ↑ f(n)'
+            def _f(n):
+                return (g_cost.get(n) or 0) + (h_cost.get(n) or 0)
+            def _ol_add(n):
+                if n in open_list: open_list.remove(n)
+                open_list.append(n)
+                open_list.sort(key=_f)
+            def _ol_remove(n):
+                if n in open_list: open_list.remove(n)
+            def _ol_label(n):
+                g   = g_cost.get(n)
+                h   = h_cost.get(n)
+                lbl = labels.get(n, str(n))
+                if isinstance(g, float) and isinstance(h, float):
+                    return f'{lbl}  {g:.1f}+{h:.1f}={g+h:.1f}'
+                return lbl
+
+        MAX_VISIBLE = 16
+
+        # ---- Figure: 3-panel (graph wide | open list | metrics) ---------------
+        fig = plt.figure(figsize=(24, 9))
+        gs  = fig.add_gridspec(1, 3, width_ratios=[5, 1, 1.4],
+                               left=0.03, right=0.97,
+                               bottom=0.18, top=0.93, wspace=0.18)
+        ax_graph   = fig.add_subplot(gs[0])
+        ax_queue   = fig.add_subplot(gs[1])
+        ax_metrics = fig.add_subplot(gs[2])
+        ax_metrics.axis('off')
+
+        manager = plt.get_current_fig_manager()
+        manager.full_screen_toggle()
+
+        agent_name = type(self.agent).__name__.replace('Agent', '')
+        fig.suptitle(f"Search Visualization — {agent_name}",
+                     fontsize=18, fontweight='bold')
+
+        # ---- Info text box (bottom-left) -------------------------------------
+        ax_info = fig.add_axes([0.03, 0.07, 0.55, 0.08])
+        ax_info.axis('off')
+        info_text = ax_info.text(
+            0.01, 0.95, '',
+            transform=ax_info.transAxes, fontsize=9,
+            verticalalignment='top', family='monospace',
+            bbox=dict(boxstyle='round', facecolor='lightyellow',
+                      edgecolor='gray', alpha=0.9)
+        )
+
+        # ---- Controls --------------------------------------------------------
+        ax_restart   = fig.add_axes([0.05, 0.01, 0.07, 0.05])
+        ax_step      = fig.add_axes([0.13, 0.01, 0.07, 0.05])
+        ax_playpause = fig.add_axes([0.21, 0.01, 0.07, 0.05])
+        ax_speed     = fig.add_axes([0.42, 0.015, 0.35, 0.03])
+
+        btn_restart   = Button(ax_restart,   'Restart', color='0.85', hovercolor='0.75')
+        btn_step      = Button(ax_step,      'Step',    color='0.85', hovercolor='0.75')
+        btn_playpause = Button(ax_playpause, 'Pause',   color='0.85', hovercolor='0.75')
+        sld_speed     = Slider(ax_speed, 'ms/frame', 50, 1000,
+                               valinit=250, valstep=50, color='steelblue')
+
+        # ---- Static graph drawing --------------------------------------------
+        node_list = list(G.nodes())
+        node_xy   = np.array([pos[n] for n in node_list])
+
+        # All edges — drawn once in light gray
+        nx.draw_networkx_edges(G, pos, ax=ax_graph,
+                               width=1.2, edge_color='#dddddd', alpha=0.9)
+
+        # Edge weight labels
+        ew_labels = {(u, v): f"{d['weight']:.0f}" for u, v, d in G.edges(data=True)}
+        nx.draw_networkx_edge_labels(G, pos, edge_labels=ew_labels,
+                                     ax=ax_graph, font_size=6,
+                                     font_color='#aaaaaa', label_pos=0.38)
+
+        # Node circles — face color updated each frame via PathCollection
+        node_scatter = nx.draw_networkx_nodes(
+            G, pos, ax=ax_graph, nodelist=node_list,
+            node_color=['#f0f0f0'] * len(node_list),
+            node_size=700, edgecolors='#555555', linewidths=1.0
+        )
+
+        # Labels offset above nodes
+        lbl_pos = {n: (x, y + 0.42) for n, (x, y) in pos.items()}
+        nx.draw_networkx_labels(G, lbl_pos, labels=labels,
+                                ax=ax_graph, font_size=7.5, font_weight='bold')
+
+        # Start / goal permanent markers on top
+        sx, sy = pos[env.start]
+        gx, gy = pos[env.goal]
+        ax_graph.scatter([sx], [sy], c='gold',       s=800, zorder=8,
+                         edgecolors='black', linewidths=1.5, marker='^')
+        ax_graph.scatter([gx], [gy], c='dodgerblue', s=800, zorder=8,
+                         edgecolors='black', linewidths=1.5, marker='X')
+
+        graph_title = ax_graph.set_title(
+            f"Searching…  (start: {labels[env.start]}  →  goal: {labels[env.goal]})",
+            fontsize=13, fontweight='bold', color='gray')
+        ax_graph.axis('off')
+
+        # Legend
+        _COLOR = {
+            'unvisited':  '#f0f0f0',
+            'discovered': 'lightyellow',
+            'agent':      'tomato',
+            'visited':    'lightblue',
+        }
+        leg = [
+            mpatches.Patch(facecolor='#f0f0f0',       edgecolor='#555', label='Unvisited'),
+            mpatches.Patch(facecolor='lightblue',      edgecolor='#555', label='Visited'),
+            mpatches.Patch(facecolor='tomato',         edgecolor='#555', label='Current'),
+            mpatches.Patch(facecolor='mediumseagreen', edgecolor='#555', label='Path'),
+            plt.scatter([], [], marker='^', c='gold',       s=80, edgecolors='black', label='Start'),
+            plt.scatter([], [], marker='X', c='dodgerblue', s=80, edgecolors='black', label='Goal'),
+        ]
+        if self._shows_discovered:
+            leg.insert(2, mpatches.Patch(facecolor='lightyellow',
+                                          edgecolor='gray', label='Discovered'))
+        ax_graph.legend(handles=leg, loc='upper left', fontsize=8,
+                        framealpha=0.9, edgecolor='#ccc')
+
+        # Container for traversal-edge artists (drawn progressively)
+        traversal_artists = {}   # frozenset({u,v}) → matplotlib artist
+
+        # ---- Helpers ---------------------------------------------------------
+        def _node_colors(done=False):
+            colors = []
+            for n in node_list:
+                if done and n in path_set:
+                    colors.append('mediumseagreen')
+                else:
+                    colors.append(_COLOR.get(node_state[n], '#f0f0f0'))
+            return colors
+
+        def _draw_traversal_edge(u, v):
+            """Draw a single traversed edge in steelblue."""
+            key = frozenset((u, v))
+            if key not in traversal_artists and G.has_edge(u, v):
+                arts = nx.draw_networkx_edges(
+                    G, pos, ax=ax_graph, edgelist=[(u, v)],
+                    width=2.2, edge_color='steelblue', alpha=0.55,
+                    arrows=False
+                )
+                if arts is not None:
+                    traversal_artists[key] = arts
+
+        # ---- Metrics summary panel -------------------------------------------
+        def _draw_metrics_panel(m):
+            """
+            Draw the metrics summary in the dedicated ax_metrics panel.
+            Called once when the animation completes.  Because it uses its
+            own axes (not the graph canvas), it never overlaps the graph and
+            is unaffected by animation restarts.
+
+            m : MetricsResult
+            """
+            ax_metrics.cla()
+            ax_metrics.axis('off')
+
+            opt_sym = '✓' if m.is_optimal else ('✗' if m.is_optimal is False else '?')
+            opt_col = 'green' if m.is_optimal else ('tomato' if m.is_optimal is False else 'gray')
+            unit    = 'km' if 'lat' in env.G.nodes[env.start] else 'units'
+            agent_short = m.agent_name.replace('Agent', '')
+
+            ax_metrics.set_title(f'{agent_short} — Results',
+                                 fontsize=10, fontweight='bold', color='steelblue', pad=6)
+
+            # Build rows as (label, value, value_color) tuples
+            rows = [
+                ('Runtime',      f'{m.runtime_s*1000:.2f} ms',   'black'),
+                ('Process mem',  f'{m.process_peak_kb:.1f} KB',  'black'),
+                ('Frontier peak',f'{m.algorithmic_peak_frontier}','black'),
+                ('Explored',     f'{m.algorithmic_explored}',     'black'),
+                (None, None, None),   # spacer
+                ('Generated',    f'{m.nodes_generated}',          'black'),
+                ('Expanded',     f'{m.nodes_expanded}',           'black'),
+                ('Branch avg',   f'{m.branching_factor_avg:.2f}', 'black'),
+                ('Branch max',   f'{m.branching_factor_max}',     'black'),
+                ('Depth',        f'{m.solution_depth}',           'black'),
+                ('Path cost',    f'{m.path_cost:.1f} {unit}',     'black'),
+                (None, None, None),   # spacer
+                ('Optimal',      f'{opt_sym}',                    opt_col),
+            ]
+
+            n_rows   = len(rows)
+            row_h    = 1.0 / (n_rows + 1)
+            lbl_x    = 0.05
+            val_x    = 0.97
+
+            # Divider line under title
+            ax_metrics.plot([0.0, 1.0], [1.0 - row_h * 0.4]*2, color='#cccccc',
+                            linewidth=0.8, transform=ax_metrics.transAxes, clip_on=False)
+
+            for i, (lbl, val, col) in enumerate(rows):
+                y = 1.0 - (i + 1) * row_h
+                if lbl is None:
+                    # Draw a thin separator line
+                    ax_metrics.plot([0.0, 1.0], [y + row_h * 0.3]*2, color='#eeeeee',
+                                   linewidth=0.6, transform=ax_metrics.transAxes, clip_on=False)
+                    continue
+                ax_metrics.text(lbl_x, y, lbl,
+                                transform=ax_metrics.transAxes,
+                                fontsize=8, va='center', ha='left',
+                                color='#555555', family='monospace')
+                ax_metrics.text(val_x, y, val,
+                                transform=ax_metrics.transAxes,
+                                fontsize=8, va='center', ha='right',
+                                color=col, family='monospace', fontweight='bold')
+
+            # Optimality reason as small text at bottom
+            ax_metrics.text(0.5, 0.01, m.optimality_reason,
+                            transform=ax_metrics.transAxes,
+                            fontsize=6.5, va='bottom', ha='center',
+                            color=opt_col, style='italic', wrap=True)
+
+            fig.canvas.draw_idle()
+
+        # ---- Queue panel helper ----------------------------------------------
+        def _draw_queue(next_pop):
+            ax_queue.cla()
+            ax_queue.axis('off')
+            ax_queue.set_title(_ol_title, fontsize=9, fontweight='bold',
+                               color='steelblue', pad=4)
+            if not open_list:
+                ax_queue.text(0.5, 0.5, '(empty)', ha='center', va='center',
+                              fontsize=9, color='gray',
+                              transform=ax_queue.transAxes)
+                return
+
+            is_stack = isinstance(self.agent, (DFSAgent, IDDFSAgent))
+            display  = list(reversed(open_list)) if is_stack else list(open_list)
+            truncated = len(display) > MAX_VISIBLE
+            visible   = display[:MAX_VISIBLE]
+            n_rows    = len(visible) + (1 if truncated else 0)
+            row_h     = 1.0 / (n_rows + 1)
+
+            for i, nid in enumerate(visible):
+                y       = 1.0 - (i + 1) * row_h
+                is_next = (nid == next_pop)
+                bg   = 'tomato'  if is_next else 'lightyellow'
+                ec   = 'darkred' if is_next else '#aaa'
+                fw   = 'bold'    if is_next else 'normal'
+                fc   = 'white'   if is_next else 'black'
+                ax_queue.text(0.5, y, _ol_label(nid),
+                              ha='center', va='center', fontsize=7.5,
+                              fontweight=fw, color=fc,
+                              transform=ax_queue.transAxes,
+                              bbox=dict(boxstyle='round,pad=0.3',
+                                        facecolor=bg, edgecolor=ec, linewidth=0.8))
+                if i < len(visible) - 1:
+                    ax_queue.annotate(
+                        '', xy=(0.5, y - row_h * 0.55),
+                        xytext=(0.5, y - row_h * 0.45),
+                        xycoords='axes fraction', textcoords='axes fraction',
+                        arrowprops=dict(arrowstyle='->', color='#aaa', lw=0.8))
+
+            if truncated:
+                y_more = 1.0 - (MAX_VISIBLE + 1) * row_h
+                ax_queue.text(0.5, y_more,
+                              f'… {len(display) - MAX_VISIBLE} more',
+                              ha='center', va='center', fontsize=8, color='gray',
+                              transform=ax_queue.transAxes)
+
+        # ---- Core update -----------------------------------------------------
+        def update(frame):
+            nonlocal path_edges_drawn
+            done     = frame >= len(events)
+            next_pop = None
+            prev_agent_node = None
+
+            if not done:
+                event_type, payload = events[frame]
+
+                # -- Open-list mirror --
+                if event_type == 'new_iteration':
+                    open_list.clear()
+                elif event_type == 'parent_snapshot':
+                    pass
+                elif event_type in ('discover', 'push'):
+                    nid = payload[0] if isinstance(payload, tuple) else payload
+                    _ol_add(nid)
+                elif event_type == 'visit':
+                    next_pop = payload
+                    _ol_remove(payload)
+
+                # -- Node / edge state --
+                if event_type == 'new_iteration':
+                    for n in node_state: node_state[n] = 'unvisited'
+                    traversal_artists.clear()
+                    hover_parent.clear()
+                    graph_title.set_text(f"Iteration — depth limit {payload}")
+                    graph_title.set_color('steelblue')
+
+                elif event_type == 'parent_snapshot':
+                    pass
+
+                elif self._shows_discovered:
+                    nid = payload
+                    if event_type == 'discover':
+                        if node_state[nid] == 'unvisited':
+                            node_state[nid] = 'discovered'
+                        par = self.agent.parent.get(nid)
+                        if par is not None:
+                            _draw_traversal_edge(par, nid)
+                    elif event_type == 'visit':
+                        for n, s in list(node_state.items()):
+                            if s == 'agent':
+                                prev_agent_node = n
+                                node_state[n] = 'visited'
+                        node_state[nid] = 'agent'
+                        graph_title.set_text(
+                            f"{labels[env.start]} → {labels[env.goal]}"
+                            f"   step {frame+1}/{len(events)}")
+                        graph_title.set_color('gray')
+
+                else:  # DFS-like — only visit events
+                    if event_type == 'visit':
+                        nid = payload
+                        for n, s in list(node_state.items()):
+                            if s == 'agent':
+                                prev_agent_node = n
+                                node_state[n] = 'visited'
+                        node_state[nid] = 'agent'
+                        # Draw edge from parent to current
+                        par = self.agent.parent.get(nid)
+                        if par is not None:
+                            _draw_traversal_edge(par, nid)
+                        graph_title.set_text(
+                            f"{labels[env.start]} → {labels[env.goal]}"
+                            f"   step {frame+1}/{len(events)}")
+                        graph_title.set_color('gray')
+
+                # Update hover parent map
+                if isinstance(self.agent, (DFSAgent, IDDFSAgent)):
+                    live_parent = {env.start: None}
+                    for t, pl in events[:frame + 1]:
+                        if t == 'push' and isinstance(pl, tuple):
+                            nb, par = pl
+                            if par is not None:
+                                live_parent[nb] = par
+                    hover_parent.clear()
+                    hover_parent.update(live_parent)
+                else:
+                    hover_parent.clear()
+                    hover_parent.update(self.agent.parent)
+
+                node_scatter.set_facecolor(_node_colors(done=False))
+
+            else:
+                # Search complete — draw final state
+                for art in path_edges_drawn:
+                    try: art.remove()
+                    except Exception: pass
+                path_edges_drawn = []
+
+                node_scatter.set_facecolor(_node_colors(done=True))
+
+                if self.agent.found and len(path) > 1:
+                    pes = nx.draw_networkx_edges(
+                        G, pos, ax=ax_graph,
+                        edgelist=list(zip(path[:-1], path[1:])),
+                        width=5.0, edge_color='mediumseagreen',
+                        arrows=True, arrowsize=22, arrowstyle='->'
+                    )
+                    if pes is not None:
+                        try: path_edges_drawn = list(pes)
+                        except TypeError: path_edges_drawn = [pes]
+
+                    unit = 'km' if 'lat' in G.nodes[env.start] else 'units'
+                    graph_title.set_text(
+                        f"Path found ✓   {labels[env.start]} → {labels[env.goal]}"
+                        f"   {len(path)-1} hops   cost: {path_cost:.1f} {unit}")
+                    graph_title.set_color('green')
+                else:
+                    graph_title.set_text(
+                        f"No path found ✗   {labels[env.start]} → {labels[env.goal]}")
+                    graph_title.set_color('red')
+
+                # Draw metrics summary panel if metrics were provided
+                if metrics is not None and not state.get('metrics_drawn'):
+                    state['metrics_drawn'] = True
+                    _draw_metrics_panel(metrics)
+
+            _draw_queue(next_pop)
+            fig.canvas.draw_idle()
+
+        # ---- Animation controls ----------------------------------------------
+        def _anim_update(_frame):
+            if state['playing'] and state['frame'] < total_frames:
+                update(state['frame'])
+                state['frame'] += 1
+
+        def on_play_pause(_event):
+            if state['playing']:
+                _anim.pause(); state['playing'] = False
+                btn_playpause.label.set_text('Play')
+            else:
+                _anim.resume(); state['playing'] = True
+                btn_playpause.label.set_text('Pause')
+            fig.canvas.draw_idle()
+
+        def on_step(_event):
+            if state['playing']:
+                _anim.pause(); state['playing'] = False
+                btn_playpause.label.set_text('Play')
+            if state['frame'] < total_frames:
+                update(state['frame']); state['frame'] += 1
+                fig.canvas.draw_idle()
+
+        def on_restart(_event):
+            for n in node_state: node_state[n] = 'unvisited'
+            traversal_artists.clear()
+            for art in path_edges_drawn:
+                try: art.remove()
+                except Exception: pass
+            open_list.clear()
+            hover_parent.clear()
+            state['frame'] = 0; state['playing'] = True; state['metrics_drawn'] = False
+            btn_playpause.label.set_text('Pause')
+            update(0); state['frame'] = 1
+            _anim.resume(); fig.canvas.draw_idle()
+
+        def on_speed(_val):
+            _anim._interval = int(sld_speed.val)
+            _anim.event_source.interval = int(sld_speed.val)
+
+        btn_playpause.on_clicked(on_play_pause)
+        btn_step.on_clicked(on_step)
+        btn_restart.on_clicked(on_restart)
+        sld_speed.on_changed(on_speed)
+
+        # ---- Hover -----------------------------------------------------------
+        def on_hover(event):
+            if event.inaxes is not ax_graph or event.xdata is None:
+                info_text.set_text('')
+                fig.canvas.draw_idle()
+                return
+
+            click = np.array([event.xdata, event.ydata])
+            dists = np.linalg.norm(node_xy - click, axis=1)
+            nid   = node_list[int(np.argmin(dists))]
+
+            if node_state[nid] == 'unvisited':
+                info_text.set_text('')
+                fig.canvas.draw_idle()
+                return
+
+            lbl   = labels.get(nid, str(nid))
+            lines = [f'City: {lbl}']
+
+            par = hover_parent.get(nid)
+            if nid == env.start or par is None:
+                lines.append('via: start')
+            else:
+                lines.append(f'via: {labels.get(par, str(par))}')
+
+            order = self.agent.visit_order.get(nid)
+            lines.append(f'visit #{order}' if order else 'frontier')
+
+            if h_cost and nid in h_cost:
+                lines.append(f'h={h_cost[nid]:.1f}')
+            if g_cost and nid in g_cost:
+                g = g_cost[nid]
+                h = (h_cost or {}).get(nid, 0.0)
+                lines.append(f'g={g:.1f}  f={g+h:.1f}')
+
+            info_text.set_text('    '.join(lines))
+            fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect('motion_notify_event', on_hover)
+
+        # ---- Launch ----------------------------------------------------------
         _anim = FuncAnimation(fig, _anim_update, interval=250,
                               cache_frame_data=False, repeat=False)
         plt.show()
